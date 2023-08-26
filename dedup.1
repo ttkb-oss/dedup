@@ -1,0 +1,166 @@
+.\" Copyright © 2023 TTKB, LLC.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions are met:
+.\"
+.\" 1. Redistributions of source code must retain the above copyright notice,
+.\"    this list of conditions and the following disclaimer.
+.\"
+.\" 2. Redistributions in binary form must reproduce the above copyright notice,
+.\"    this list of conditions and the following disclaimer in the documentation
+.\"    and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS”
+.\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+.\" LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.Dd $Mdocdate$
+.Dt DEDUP 1
+.Os
+.Sh NAME
+.Nm dedup
+.Nd replace duplicate file data with a copy-on-write clone.
+.Sh SYNOPSIS
+.Nm dedup
+.Op Fl PVcnvx
+.Op Fl t threads
+.Op Fl d depth
+.Op Ar
+.Sh DESCRIPTION
+.Nm
+finds files with identical content in
+.Ar
+and replaces the data on disk of a duplicate
+with a clone (using
+.Xr clonefile 2
+) of the other. If no files is specified the current directory is used. The
+cloned file shares its data blocks with the original file.
+Unlike a hardlinked file, any future writes to either the clone or the original
+file will be remain private to that file.
+.Pp
+.Nm
+works in two phases. First it evaluates all of the paths provided recursively
+looking for duplicates. Once all duplicates are found, any files that are not
+already clones of best clone source are replaced with clones.
+.Pp
+There are limits to the files that can be cloned:
+.Bl -enum -offset indent
+.It
+the file must be a regular file
+.It
+the file must have only one hardlink
+.It
+the file and its directory must be writable by the user
+.El
+.Pp
+To determine the best source for clones is chosen by finding the file with the
+most hardlinks. If all files have a single link, a file which shares the most
+clones with others is chosen. If none of the files have clones, the first file
+encountered will be chosen. The file with the most hardlinks is prioritized due
+to the likelihood of its data continuing to exist even if the file is deleted.
+A file with the most clones is prioritized to reduce the number of files to be
+cloned and to provided some determinism when running over a directory multiple
+times; most previously cloned files should remain untouched and new files will
+be assimilated into the shared data set.
+.Pp
+Files with multiple hardlinks are not replaced because it is not possible to
+gaurantee all other links to that inode exist within the tree(s) being evaluated.
+Future versions of
+.Nm
+may consider cloning files with multiple hardlinks if all links are in the tree.
+Replacing a link with a clone changes the semantics from two link pointing at
+the same, mutable shared storage to two links pointing at the same copy-on-write
+storage. For scenarios where hardlinks were previously being used because
+clones were not available, future versions may provide a flag to destructively
+replace hardlinks with clones.
+.Pp
+.Nm
+will only work on volumes that have the
+.Ar VOL_CAP_INT_CLONE
+capability. Currently that is limited to APFS.
+.Sh OPTIONS
+The following options are available:
+.Bl -tag -width indent
+.It Fl c , Fl Fl color
+Use ANSI colors when displaying output.
+.It Fl d Ar depth , Fl Fl depth Ar depth
+Only traverse
+.Ar depth
+directories deep into each provided path.
+.It Fl h
+Display sizes using SI suffixes with 2-4 digits of precision.
+.It Fl n , Fl Fl dry-run
+Evaluate all files and find all duplicates but only print what would be done
+and do not modify any files.
+.It Fl P , Fl Fl no-progress
+Do not display a progress bar.
+.It Fl t Ar threads
+The number of threads to use for evaluating files. By default thi is the same
+as the number of CPUs on the host as described by the
+.Ar hw.ncpu
+value returned by
+.Xr sysctl 8 .
+If the value 0 is provided all evaluation will be done serially in the main
+thread.
+.It Fl V , Fl Fl version
+Print the version and exit
+.It Fl v , Fl Fl verbose
+Increase verbosity. May be specified multiple times.
+.It Fl x , Fl Fl one-file-system
+Prevent
+.Nm
+from descending into directories that have a device number different than that
+of the file from which the descent began.
+.It Fl ? , Fl Fl help
+Print a summary of options and exit.
+.El
+.Sh ENVIRONMENT
+If the environment variables
+.Ev CLICOLOR
+or
+.Ev COLORTERM
+are set while running in an interactive terminal,
+.Tn ANSI
+color sequences will be used.
+.\" .Sh FILES
+.Sh EXIT STATUS
+The
+.Nm
+utility exits 0 and >0 if an error occurs.
+.Pp
+It is possible that during abnormal termination a temporary clone will be left
+before it is moved to the path it is replacing. In such cases a file with the
+prefix .~. followed by the name of the file that was to be replaced will exist
+in the same directory as target file.
+.Sh EXAMPLES
+Find all duplicates and display which files would be replaced by clones along
+with the estimated space that would be saved.
+.Pp
+.Dl $ dedup -n
+.\" .Sh DIAGNOSTICS
+.\" For sections 1, 4, 6, 7, 8, and 9 printf/stderr messages only.
+.Sh SEE ALSO
+.Xr clonefile 2
+.Sh STANDARDS
+Sometimes.
+.\" .Sh HISTORY
+.Sh AUTHORS
+.Nm
+was written by
+.An Jonathan Hohle Aq Mt jon@ttkb.co .
+.\" .Sh CAVEATS
+.\" .Sh BUGS
+.Sh SECURITY CONSIDERATIONS
+.Nm
+makes a best effort attempt to replace original files with clones that have
+the same permissions, metadata, and ACLs. Support for copying metadata comes
+from
+.Xr copyfile 3
+.

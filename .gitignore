@@ -1,0 +1,9 @@
+*.gcda
+*.swp
+*.gcno
+*.o
+*.dSYM
+build/
+dedup
+test/test-data
+test/dedup_check
