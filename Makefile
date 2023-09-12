@@ -19,7 +19,7 @@ CFLAGS = \
     -mtune=generic \
     -O
 
-.PHONY: check clean clean-coveage report-coverage
+.PHONY: check clean clean-coveage report-coverage dist
 
 %.o: %.c %.h
 	rm -f $(basename $<).gcda $(basename $<).gcno
@@ -49,6 +49,7 @@ clean: clean-coverage
 	rm -f *.o
 	rm -f dedup
 	cd test && make clean
+	rm -rf build
 
 report-coverage:
 	mkdir -p build/private/coverage
@@ -60,3 +61,14 @@ PREFIX ?= /usr/local
 install: dedup
 	install dedup $(PREFIX)/bin
 	install dedup.1 $(PREFIX)/share/man/man1
+
+build/dist:
+	mkdir -p $(PREFIX)/bin
+	mkdir -p $(PREFIX)/share/man/man1
+
+VERSION ?= 0.0.0
+
+dist: PREFIX=build/dist
+dist: dedup build/dist install
+	cd build/dist; tar -Jcvf dedup-$(VERSION).tar.xz bin share
+	cd build/dist; zip -r dedup-$(VERSION).zip bin share
