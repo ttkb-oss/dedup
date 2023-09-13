@@ -1,3 +1,7 @@
+LANG=en
+
+VERSION ?= 0.0.1
+
 CFLAGS = \
 	-std=gnu2x \
     -Wall -Wextra -Werror -pedantic \
@@ -17,9 +21,11 @@ CFLAGS = \
     -fsanitize=address \
     -fno-omit-frame-pointer \
     -mtune=generic \
-    -O
+    -O \
+    '-DVERSION="$(VERSION)"' \
+    '-DBUILD_DATE="$(shell date '+%Y%m%d')"'
 
-.PHONY: check clean clean-coveage report-coverage dist
+.PHONY: check clean clean-coveage report-coverage dist check-spelling check-spelling-man check-spelling-readme
 
 %.o: %.c %.h
 	rm -f $(basename $<).gcda $(basename $<).gcno
@@ -66,9 +72,35 @@ build/dist:
 	mkdir -p $(PREFIX)/bin
 	mkdir -p $(PREFIX)/share/man/man1
 
-VERSION ?= 0.0.0
-
 dist: PREFIX=build/dist
-dist: dedup build/dist install
+dist: check-spelling dedup build/dist install
 	cd build/dist; tar -Jcvf dedup-$(VERSION).tar.xz bin share
 	cd build/dist; zip -r dedup-$(VERSION).zip bin share
+
+OUTPUT_DICT = build/private-aspell-dict
+
+$(OUTPUT_DICT): dict
+	$(call print_target)
+	mkdir -p build/private/spelling
+	aspell --lang="$(LANG)" create master "./$@" < $^
+
+check-spelling-man: dedup.1 $(OUTPUT_DICT)
+	cat dedup.1 | \
+        tr '”' ' ' | \
+	    aspell list \
+            --mode nroff \
+            --lang="$(LANG)" \
+            --extra-dicts="./$(OUTPUT_DICT)" | \
+	    sort -u | \
+	    xargs -n 1 printf "\\033[0;31m$< >>>\033[0m %s\n"
+
+check-spelling-readme: README.md $(OUTPUT_DICT)
+	cat README.md | \
+	    aspell list \
+	        --mode markdown \
+	        --lang="$(LANG)" \
+	        --extra-dicts="./$(OUTPUT_DICT)" | \
+	    sort -u | \
+	    xargs -n 1 printf "\\033[0;31m$< >>>\033[0m %s\n"
+
+check-spelling: check-spelling-readme check-spelling-man

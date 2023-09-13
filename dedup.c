@@ -29,11 +29,17 @@
 __used static char const copyright[] =
     "@(#) Copyright © 2023\n"
         "TTKB, LLC. All rights reserved.\n";
+#ifndef VERSION
+#define VERSION "0.0.0"
+#endif // VERSION
+#ifndef BUILD_DATE
+#define BUILD_DATE "00000000"
+#endif // BUILD_DATE
 __used static char const version[] =
-    "TTKB dedup 20230907";
+    "TTKB dedup " VERSION " (" BUILD_DATE ")";
 #if 0
 static char sccsid[] = "@(#)dedup.c)";
-#endif
+#endif // 0
 #endif // lint
 
 #define _DARWIN_FEATURE_64_BIT_INODE
