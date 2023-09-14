@@ -35,18 +35,39 @@
 
 #include "clone.h"
 
+#include <sys/stat.h>
+
+int find_zero_file(const char* restrict path) {
+    if (access(path, W_OK)) {
+        return 1;
+    }
+
+    struct stat s = { 0 };
+    if (stat(path, &s)) {
+        fprintf(stderr, "Could not stat %s\n", path);
+        perror("stat(2)");
+        return 2;
+    }
+
+    if (s.st_size == 0) {
+        return 3;
+    }
+
+    return 0;
+}
+
 int replace_with_clone(const char* src, const char* dst) {
-    char base[PATH_MAX];
+    char base[PATH_MAX] = { 0 };
     if (!basename_r(dst, base)) {
         return errno;
     }
 
-    char dir[PATH_MAX];
+    char dir[PATH_MAX] = { 0 };
     if (!dirname_r(dst, dir)) {
         return errno;
     }
 
-    char path[PATH_MAX];
+    char path[PATH_MAX] = { 0 };
     int result = snprintf(path,
                           PATH_MAX,
                           "%s/.~.%s",
@@ -67,19 +88,42 @@ int replace_with_clone(const char* src, const char* dst) {
         return result;
     }
 
-    // TODO: use COPYFILE_CHECK during dry-run
-    // TODO: can COPYFILE_EXCL be used?
-    result = copyfile(dst, path, NULL,
-                      COPYFILE_METADATA);
+    if (find_zero_file(path)) {
+        fprintf(stderr,
+                "invalid file created by clonefile(2)\n");
+        unlink(path);
+        return ENOENT;
+    }
+
+    // TODO: use COPYFILE_CHECK during dry-run and
+    //       higher verbosity levels
+    int check = copyfile(dst,
+                         path,
+                         NULL,
+                         COPYFILE_CHECK | COPYFILE_METADATA);
+    if (check & COPYFILE_DATA) {
+        perror("copyfile(3) should not copy data");
+        unlink(path);
+        return check;
+    }
+
+    result = copyfile(dst,
+                      path,
+                      NULL,
+                      COPYFILE_METADATA | (1<<31));
     if (result) {
         perror("could not copy metadata");
         unlink(path);
         return result;
     }
 
-    printf("int result = rename(\"%s\", \"%s\");\n",
-           path,
-           dst);
+    if (find_zero_file(path)) {
+        fprintf(stderr,
+                "invalid file created by copyfile(3)\n");
+        unlink(path);
+        return ENOENT;
+    }
+
     result = rename(path, dst);
     if (result) {
         perror("could not replace existing file");

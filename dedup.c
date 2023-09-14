@@ -94,6 +94,70 @@ typedef struct DedupContext {
     pthread_mutex_t done_mutex;
 } DedupContext;
 
+uint64_t get_clone_id(const char* restrict path) {
+    struct attrlist attrList = {
+        .bitmapcount = ATTR_BITMAP_COUNT,
+        .forkattr = ATTR_CMNEXT_CLONEID,
+    };
+
+    struct UInt64Ref {
+        uint32_t length;
+        uint64_t value;
+    } __attribute((aligned(4), packed));
+    struct UInt64Ref clone_id = { 0 };
+
+    int err = getattrlist(path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
+    if (err) {
+        perror("could not getattrlist");
+        return 0;
+    }
+
+    return clone_id.value;
+}
+
+int may_share_blocks(const char* restrict path) {
+    struct attrlist attrList = {
+        .bitmapcount = ATTR_BITMAP_COUNT,
+        .forkattr = ATTR_CMNEXT_EXT_FLAGS,
+    };
+
+    struct UInt64Ref {
+        uint32_t length;
+        uint64_t value;
+    } __attribute((aligned(4), packed));
+    struct UInt64Ref clone_id = { 0 };
+
+    int err = getattrlist(path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
+    if (err) {
+        perror("could not getattrlist");
+        return 0;
+    }
+
+    return clone_id.value | EF_MAY_SHARE_BLOCKS;
+}
+
+size_t private_size(const char* restrict path) {
+    struct attrlist attrList = {
+        .bitmapcount = ATTR_BITMAP_COUNT,
+        .forkattr = ATTR_CMNEXT_PRIVATESIZE,
+    };
+
+    struct UInt64Ref {
+        uint32_t length;
+        off_t size;
+    } __attribute((aligned(4), packed));
+    struct UInt64Ref size_attr = { 0 };
+
+    int err = getattrlist(path, &attrList, &size_attr, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
+    if (err) {
+        perror("could not getattrlist");
+        return 0;
+    }
+
+    return size_attr.size;
+}
+
+
 void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
 
     FileMetadata fm = { 0 };
@@ -120,6 +184,12 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
     //
     // get clone id
     //
+    fm.clone_id = get_clone_id(fe->path);
+
+    if (!fm.clone_id) {
+        free(fm.path); fm.path = NULL;
+        return;
+    }
 
     struct attrlist attrList = {
         .bitmapcount = ATTR_BITMAP_COUNT,
@@ -283,18 +353,36 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
             FileMetadata* fm = alist_get(metadata_set, i);
             clone_id_tree_increment(clone_counts, fm);
         }
+
+        if (rb_tree_count(clone_counts) == 1) {
+            origin = alist_get(metadata_set, 0);
+            ctx->already_saved += origin->size * (alist_size(metadata_set) - 1);
+            if (ctx->verbosity) {
+                printf("%s is already cloned to\n",
+                       origin->path);
+                for (size_t i = 1; i < alist_size(metadata_set); i++) {
+                    FileMetadata* fm = alist_get(metadata_set, i);
+                    printf("\t%s\n", fm->path);
+                }
+            }
+            return 0;
+        }
+
         origin = clone_id_tree_max(clone_counts);
-        free_clone_id_counts(clone_counts);
         if (rb_tree_count(clone_counts) == alist_size(metadata_set)) {
             reason = "first seen";
         } else {
             reason = "most clones";
         }
+        free_clone_id_counts(clone_counts);
+        clone_counts = NULL;
     }
 
     printf("using %s as the clone origin (%s)\n",
            origin->path,
            reason);
+
+    uint64_t origin_clone_id = get_clone_id(origin->path);
 
     for (size_t i = 0; i < alist_size(metadata_set); i++) {
         FileMetadata* fm = alist_get(metadata_set, i);
@@ -336,13 +424,30 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
                                         fm->path);
         if (result) {
             perror("clone failed");
+            fprintf(stderr,
+                    "\tcould not clone %s\n",
+                    fm->path);
+            continue;
         }
 
-        printf("\tmoved %s to use %s data saved %zu (previously saved: %zu)\n",
-               fm->path,
-               origin->path,
-               fm->size,
-               ctx->saved);
+        printf("\tcloned to %s\n",
+               fm->path);
+
+        if (origin_clone_id != get_clone_id(fm->path)) {
+            if (private_size(fm->path) == 0) {
+                fprintf(stderr,
+                        "\t\tclonefile(2) did not clone %s as expected, but it is a clone\n",
+                        fm->path);
+                ctx->already_saved += fm->size;
+                continue;
+            } else {
+                fprintf(stderr,
+                        "\t\tclonefile(2) did not clone %s as expected, did not report an error\n",
+                        fm->path);
+                continue;
+            }
+        }
+
         ctx->saved += fm->size;
     }
 
@@ -734,7 +839,7 @@ int main(int argc, char* argv[]) {
     if (human_readable) {
         print_human_bytes(dc.already_saved);
     } else {
-        printf("%zu", dc.saved);
+        printf("%zu", dc.already_saved);
     }
     putchar('\n');
 

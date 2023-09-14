@@ -402,5 +402,10 @@ FileMetadata* clone_id_tree_max(rb_tree_t* tree) {
 }
 
 void free_clone_id_counts(rb_tree_t* tree) {
-
+    IDCountNode* node = NULL;
+    while ((node = RB_TREE_MIN(tree))) {
+        rb_tree_remove_node(tree, node);
+        free(node);
+    }
+    free(tree);
 }

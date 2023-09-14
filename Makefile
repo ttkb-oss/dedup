@@ -1,6 +1,6 @@
 LANG=en
 
-VERSION ?= 0.0.1
+VERSION ?= 0.0.2
 
 CFLAGS = \
 	-std=gnu2x \
@@ -25,7 +25,7 @@ CFLAGS = \
     '-DVERSION="$(VERSION)"' \
     '-DBUILD_DATE="$(shell date '+%Y%m%d')"'
 
-.PHONY: check clean clean-coveage report-coverage dist check-spelling check-spelling-man check-spelling-readme
+.PHONY: check-build check clean clean-coveage report-coverage dist check-spelling check-spelling-man check-spelling-readme
 
 %.o: %.c %.h
 	rm -f $(basename $<).gcda $(basename $<).gcno
@@ -37,13 +37,15 @@ dedup: dedup.c alist.o clone.o map.o progress.o queue.o
 	codesign -s - -v -f --entitlements entitlement.plist dedup.unsigned
 	mv dedup.unsigned dedup
 
-check: CFLAGS += \
+check-build: CFLAGS += \
         -DNDEBUG \
         -ftest-coverage \
         -fprofile-arcs \
+        -fsanitize-address-use-after-return=always \
         -g \
-        -Og
-check: dedup
+        -O0
+check-build: dedup
+check: check-build
 	cd test && make check
 
 clean-coverage:
@@ -76,6 +78,19 @@ dist: PREFIX=build/dist
 dist: check-spelling dedup build/dist install
 	cd build/dist; tar -Jcvf dedup-$(VERSION).tar.xz bin share
 	cd build/dist; zip -r dedup-$(VERSION).zip bin share
+
+dist-verify: check dist
+	mkdir -p build/dist-check
+	cd build/dist-check && tar xvJf ../dist/dedup-$(VERSION).tar.xz
+	cd build/dist-check && test -x bin/dedup
+	cd build/dist-check && test -f share/man/man1/dedup.1
+
+uninstall:
+	rm $(PREFIX)/bin/dedup
+	rm $(PREFIX)/share/man/man1/dedup.1
+
+distcheck: PREFIX=build/dist-check
+distcheck: dist-verify uninstall
 
 OUTPUT_DICT = build/private-aspell-dict
 
