@@ -2,7 +2,7 @@ LANG = en
 
 VERSION ?= 0.0.3
 
-CFLAGS = \
+CFLAGS += \
 	-std=gnu2x \
     -Wall -Wextra -Werror -pedantic \
     -Wpointer-arith \
@@ -27,17 +27,33 @@ CFLAGS = \
 
 ENTITLEMENT_FLAGS =
 
-.PHONY: check-build check clean clean-coveage report-coverage dist check-spelling check-spelling-man check-spelling-readme
+.PHONY: check-build check clean clean-coveage report-coverage dist universal-dist \
+    check-spelling check-spelling-man \
+	check-spelling-readme universal-dedup
 
 %.o: %.c %.h
 	rm -f $(basename $<).gcda $(basename $<).gcno
 	$(CC) $(CFLAGS) -v -c -o $@ $<
 
-dedup: dedup.c alist.o clone.o map.o progress.o queue.o
+dedup.arm: CFLAGS += -target arm64-apple-macos13
+dedup.x86_64: CFLAGS += -target x86_64-apple-macos13
+
+dedup dedup.arm dedup.x86_64: dedup.c alist.o clone.o map.o progress.o queue.o
 	rm -f dedup.gcda dedup.gcno
 	$(CC) $(CFLAGS) -o $@.unsigned $^
-	codesign -s - -v -f $(ENTITLEMENT_FLAGS) dedup.unsigned
-	mv dedup.unsigned dedup
+	codesign -s - -v -f $(ENTITLEMENT_FLAGS) $@.unsigned
+	mv $@.unsigned $@
+
+dedup.universal:
+	rm -f *.o
+	$(MAKE) dedup.arm
+	rm -f *.o
+	$(MAKE) dedup.x86_64
+	lipo -create -output dedup.universal dedup.arm dedup.x86_64
+
+universal-dedup: dedup.universal
+	codesign -s - -v -f $(ENTITLEMENT_FLAGS) dedup.universal
+	cp -c dedup.universal dedup
 
 check-build: ENTITLEMENT_FLAGS = --entitlements entitlement.plist
 check-build: CFLAGS += \
@@ -58,7 +74,7 @@ clean-coverage:
 
 clean: clean-coverage
 	rm -f *.o
-	rm -f dedup
+	rm -f dedup dedup.arm dedup.x86_64 dedup.universal
 	cd test && make clean
 	rm -rf build
 
@@ -78,7 +94,7 @@ build/dist:
 	mkdir -p $(PREFIX)/share/man/man1
 
 dist: PREFIX=build/dist
-dist: check-spelling dedup build/dist install
+dist: check-spelling universal-dedup build/dist install
 	cd build/dist; tar -Jcvf dedup-$(VERSION).tar.xz bin share
 	cd build/dist; zip -r dedup-$(VERSION).zip bin share
 
@@ -87,6 +103,9 @@ dist-verify: check dist
 	cd build/dist-check && tar xvJf ../dist/dedup-$(VERSION).tar.xz
 	cd build/dist-check && test -x bin/dedup
 	cd build/dist-check && test -f share/man/man1/dedup.1
+	cd build/dist-check && file bin/dedup | grep -q 'Mach-O universal'
+	cd build/dist-check && file bin/dedup | grep -q '(for architecture x86_64)'
+	cd build/dist-check && file bin/dedup | grep -q '(for architecture arm64)'
 
 uninstall:
 	rm $(PREFIX)/bin/dedup

@@ -1,6 +1,6 @@
 # `dedup(1)`
 
-Replace duplicate file data with a copy-on-write clone.
+A macOS utility to replace duplicate file data with a copy-on-write clone.
 
 # SYNOPSIS
 
@@ -147,7 +147,58 @@ from
 
 # HISTORY
 
-If the author was more clever, he might have named this program `avril`.
+If the author was more clever, he might have named this program
+[`avril`](https://www.google.com/search?q=replaced+with+a+clone).
+
+# INSTALLATION
+
+Download the [latest release](https://github.com/ttkb-oss/dedup/releases/latest)
+and extract the files in the `$PREFIX` of your choice.
+
+*or*
+
+Build a copy locally
+
+```
+git clone https://github.com/ttkb-oss/dedup.git
+cd dedup
+make && sudo make install
+```
+
+Packages for package managers will be provided in the future.
+
+# DEVELOPMENT
+
+Up to this point development has only been done on macOS 13, but all APIs used
+were available in macOS 12, so it may work there as well.
+
+For building the app, a recent version of [Xcode](https://developer.apple.com/xcode/)
+is required along with Command Line Tools (`xcode-select --install`).
+
+[Check](https://libcheck.github.io/check/) is used for testing.
+
+[Aspell](http://aspell.net) is used for spell checking.
+
+[LCOV](https://github.com/linux-test-project/lcov) is used for reporting test coverage.
+
+[MacPorts](https://www.macports.org) users can
+
+```bash
+sudo port install lcov aspell check
+```
+
+Homebrew users should install things the way they choose to. They may need to
+add header and library search paths when running the `check` target (or any
+of the targets that compile things in `test/Makefile`.
+
+```bash
+CFLAGS='-I/usr/local/include' LDFLAGS='-L/usr/local/lib' make check
+```
+
+# CONTRIBUTING
+
+Feel free to send a PR for build, code, test, or documentation changes. If the
+PR is approved, you will be asked to assign copyright of the submitted code.
 
 # FAQ
 
@@ -209,3 +260,9 @@ A [patched version of du(1)](https://github.com/hohle/file_cmds/commit/6fd06e315
 will also ignore clones it encounters multiple times just like hard links
 to the same inode are ignored. The the patched `du` will display smaller
 block usage if data can be deduplicated.
+
+## Are Any Others Operating Systems Supported?
+
+`dedup` leverages both file system support for creating clones as well as the
+appropriate system calls. [OpenZFS support for sharing blocks](https://github.com/openzfs/zfs/pull/13392)
+may make FreeBSD support possible in the future.

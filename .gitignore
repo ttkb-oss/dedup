@@ -5,5 +5,8 @@
 *.dSYM
 build/
 dedup
+dedup.arm64
+dedup.x86_64
+dedup.universal
 test/test-data
 test/dedup_check
