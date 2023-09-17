@@ -1,6 +1,6 @@
-LANG=en
+LANG = en
 
-VERSION ?= 0.0.2
+VERSION ?= 0.0.3
 
 CFLAGS = \
 	-std=gnu2x \
@@ -25,6 +25,8 @@ CFLAGS = \
     '-DVERSION="$(VERSION)"' \
     '-DBUILD_DATE="$(shell date '+%Y%m%d')"'
 
+ENTITLEMENT_FLAGS =
+
 .PHONY: check-build check clean clean-coveage report-coverage dist check-spelling check-spelling-man check-spelling-readme
 
 %.o: %.c %.h
@@ -34,9 +36,10 @@ CFLAGS = \
 dedup: dedup.c alist.o clone.o map.o progress.o queue.o
 	rm -f dedup.gcda dedup.gcno
 	$(CC) $(CFLAGS) -o $@.unsigned $^
-	codesign -s - -v -f --entitlements entitlement.plist dedup.unsigned
+	codesign -s - -v -f $(ENTITLEMENT_FLAGS) dedup.unsigned
 	mv dedup.unsigned dedup
 
+check-build: ENTITLEMENT_FLAGS = --entitlements entitlement.plist
 check-build: CFLAGS += \
         -DNDEBUG \
         -ftest-coverage \
@@ -119,3 +122,13 @@ check-spelling-readme: README.md $(OUTPUT_DICT)
 	    xargs -n 1 printf "\\033[0;31m$< >>>\033[0m %s\n"
 
 check-spelling: check-spelling-readme check-spelling-man
+
+clonefile-bug: CFLAGS += \
+        -DNDEBUG \
+        -ftest-coverage \
+        -fprofile-arcs \
+        -fsanitize-address-use-after-return=always \
+        -g \
+        -O0
+clonefile-bug: clonefile-bug.o clone.o
+	$(CC) $(CFLAGS) -o $@ $^

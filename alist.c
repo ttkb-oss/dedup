@@ -27,7 +27,7 @@
 #include "alist.h"
 
 AList* new_alist() {
-    return new_alist_with_capacity(8);
+    return new_alist_with_capacity(ALIST_DEFAULT_CAPACITY);
 }
 
 AList* new_alist_with_capacity(size_t initial) {
@@ -100,8 +100,4 @@ void* alist_remove(AList* list, size_t index) {
     }
     list->size--;
     return e;
-}
-
-void* alist_end(AList* list) {
-    return list->elements + list->size;
 }

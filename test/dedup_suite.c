@@ -214,6 +214,11 @@ START_TEST(dedup_help) {
     ck_assert_int_eq(1, WEXITSTATUS(r));
 } END_TEST
 
+START_TEST(dedup_dry_run) {
+    int r = system("../dedup -nP /Volumes/dedup-test-hfs test-data/bars");
+    ck_assert_int_eq(0, WEXITSTATUS(r));
+} END_TEST
+
 Suite* dedup_suite() {
     TCase* tc = tcase_create("dedup");
     tcase_add_test(tc, dedup_empty);
@@ -227,6 +232,7 @@ Suite* dedup_suite() {
     tcase_add_test(tc, dedup_does_not_exist);
     tcase_add_test(tc, dedup_negative_threads);
     tcase_add_test(tc, dedup_help);
+    tcase_add_test(tc, dedup_dry_run);
 
     Suite* s = suite_create("dedup");
     suite_add_tcase(s, tc);

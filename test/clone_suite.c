@@ -50,7 +50,7 @@ START_TEST(clone_path_to_long) {
 } END_TEST
 
 START_TEST(clone_bad_src) {
-    int r = replace_with_clone("/tmp/does-not-exist", "also-does-not-exist");
+    int r = replace_with_clone("/tmp/does-not-exist", "test-data/also-does-not-exist");
     ck_assert_int_eq(r, -1);
 } END_TEST
 
@@ -63,7 +63,28 @@ START_TEST(clone_bad_dst) {
 START_TEST(clone_cannot_replace) {
     int r = replace_with_clone("test-data/clone-dst-acls/bar",
                                "test-data/clone-dst-acls/bar4");
-    ck_assert_int_eq(r, -1);
+    ck_assert_int_eq(r, 2);
+} END_TEST
+
+char* tmp_name(const char* restrict path, char* restrict out, size_t size);
+
+START_TEST(clone_tmp_name) {
+    char path[PATH_MAX] = { 0 };
+
+    char* result = tmp_name("foo.bar", path, PATH_MAX);
+    ck_assert_ptr_eq(path, result);
+    ck_assert_str_eq("./.~.foo.bar", result);
+    // memset(path, '\0', PATH_MAX);
+
+    result = tmp_name("foo/bar.baz", path, PATH_MAX);
+    ck_assert_ptr_eq(path, result);
+    ck_assert_str_eq("foo/.~.bar.baz", result);
+    // memset(path, '\0', PATH_MAX);
+
+    result = tmp_name("/foo/bar/baz.car", path, PATH_MAX);
+    ck_assert_ptr_eq(path, result);
+    ck_assert_str_eq("/foo/bar/.~.baz.car", result);
+    // memset(path, '\0', PATH_MAX);
 } END_TEST
 
 Suite* clone_suite() {
@@ -72,6 +93,7 @@ Suite* clone_suite() {
     tcase_add_test(tc, clone_bad_src);
     tcase_add_test(tc, clone_bad_dst);
     tcase_add_test(tc, clone_cannot_replace);
+    tcase_add_test(tc, clone_tmp_name);
 
     Suite* s = suite_create("clone");
     suite_add_tcase(s, tc);

@@ -32,6 +32,7 @@
 #include <libgen.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "clone.h"
 
@@ -56,32 +57,50 @@ int find_zero_file(const char* restrict path) {
     return 0;
 }
 
-int replace_with_clone(const char* src, const char* dst) {
-    char base[PATH_MAX] = { 0 };
-    if (!basename_r(dst, base)) {
-        return errno;
-    }
+// Expects `out` to be char[PATH_MAX].
+//
+char* tmp_name(const char* restrict path, char* restrict out, size_t size) {
+    out[0] = '\0';
 
     char dir[PATH_MAX] = { 0 };
-    if (!dirname_r(dst, dir)) {
-        return errno;
+    if (!dirname_r(path, dir)) {
+        return NULL;
     }
 
+    char base[PATH_MAX] = { 0 };
+    if (!basename_r(path, base)) {
+        return NULL;
+    }
+
+    if (strlcat(out, dir, size) >= size ||
+        strlcat(out, "/.~.", size) >= size ||
+        strlcat(out, base, size) >= size) {
+        errno = ENAMETOOLONG;
+        return NULL;
+    }
+
+    if (access(out, F_OK) == 0) {
+        fprintf(stderr,
+                "Staging file %s already exists. Remove it to replace %s with a clone\n",
+                out,
+                path);
+        errno = EEXIST;
+        return NULL;
+    }
+
+    return out;
+}
+
+int replace_with_clone(const char* src, const char* dst) {
     char path[PATH_MAX] = { 0 };
-    int result = snprintf(path,
-                          PATH_MAX,
-                          "%s/.~.%s",
-                          dir,
-                          base);
-    if (result >= PATH_MAX) {
-        fprintf(stderr, "tmp path exceeded available path size");
-        return ENAMETOOLONG;
+    if (!tmp_name(dst, path, PATH_MAX)) {
+        return errno;
     }
 
     errno = 0;
-    result = clonefile(src,
-                       path,
-                       0);
+    int result = clonefile(src,
+                           path,
+                           0);
     if (result) {
         perror("could not clonefile");
         unlink(path); // if it exists

@@ -26,89 +26,16 @@
 
 #include "map.h"
 
+#include <sys/mman.h>
+
+#include <CommonCrypto/CommonDigest.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
+#include <unistd.h>
 
-void indent(const int level) {
-    for (int l = 0; l < level; l++) {
-        printf("    ");
-    }
-}
-
-char* inode_path_for_dev_inode(dev_t dev, ino_t inode, char dst[PATH_MAX]) {
-    size_t n = snprintf(dst,
-                        PATH_MAX,
-                        "/.vol/%d/%llu",
-                        dev,
-                        inode);
-
-    if (n >= PATH_MAX) {
-        fprintf(stderr, "path too long: %zu\n", n);
-        return NULL;
-    }
-
-    return dst;
-
-}
-
-char* inode_path(const FileMetadata* fm, char dst[PATH_MAX]) {
-    return inode_path_for_dev_inode(fm->device, fm->inode, dst);
-}
-
-char* finode_path(int fd, char dst[PATH_MAX]) {
-    struct stat s = { 0 };
-    int r = fstat(fd, &s);
-    if (r) {
-        dst[0] = '\0';
-        perror("Could not fstat(2)");
-        return NULL;
-    }
-
-    return inode_path_for_dev_inode(s.st_dev, s.st_ino, dst);
-}
-
-void print_sha256(const uint8_t sha256[32]) {
-    for (int i = 0; i < 32; i++) {
-        printf("%02x", sha256[i]);
-    }
-}
-
-void print_file_metadata(const FileMetadata* fm, const int level) {
-
-    // /.vol/16777232/80475364
-    // length: 64
-    // offset: 8
-    // full path: /Users/jonathanhohle/Projects/Dedup/test/dedup_suite.gcda
-    // size: 128
-    // clone id: 0x4cbf4e40000000c
-    // sha256: c60f619378145d715cd88b94b28912aafd6e6f1f9cbd9ea916ff3e4b1660bebf
-    char path[PATH_MAX] = { 0 };
-    inode_path(fm, path);
-
-    indent(level);
-    printf("%s\n", path);
-
-    indent(level);
-    printf("full path: %s\n", fm->path);
-
-    indent(level);
-    printf("size: %zu\n", fm->size);
-
-    indent(level);
-    printf("clone id: 0x%llx\n", fm->clone_id);
-
-    indent(level);
-    printf("first: %02x\n", fm->first);
-
-    indent(level);
-    printf("last: %02x\n", fm->last);
-
-    indent(level);
-    printf("sha256: ");
-    print_sha256(fm->sha256);
-    putchar('\n');
-}
+static const char EMPTY_SHA256[32] =  { 0 };
 
 void free_metadata(FileMetadata* fm) {
     free(fm->path);
@@ -208,7 +135,7 @@ rb_tree_t* new_visited_tree() {
     return t;
 }
 
-rb_tree_t* visited_tree_find_or_create_sha256_tree(rb_tree_t* tree, FileMetadata* fm) {
+rb_tree_t* visited_tree_find_or_create_last_tree(rb_tree_t* tree, FileMetadata* fm) {
     DeviceNode* device_node = rb_tree_find_node(tree, &fm->device);
     if (!device_node) {
         device_node = malloc(sizeof(DeviceNode));
@@ -236,24 +163,102 @@ rb_tree_t* visited_tree_find_or_create_sha256_tree(rb_tree_t* tree, FileMetadata
         rb_tree_insert_node(&size_node->children, first_node);
     }
 
-    CharNode* last_node = rb_tree_find_node(&first_node->children, &fm->last);
+    return &first_node->children;
+}
+
+CharNode* visited_tree_find_or_create_last_node(rb_tree_t* tree, FileMetadata* fm) {
+    rb_tree_t* last_tree = visited_tree_find_or_create_last_tree(tree, fm);
+
+    CharNode* last_node = rb_tree_find_node(last_tree, &fm->last);
     if (!last_node) {
-        last_node = malloc(sizeof(CharNode));
+        last_node = calloc(1, sizeof(CharNode));
         last_node->c = fm->last;
 
         rb_tree_init(&last_node->children, &SHA256_OPS);
-        rb_tree_insert_node(&first_node->children, last_node);
+        rb_tree_insert_node(last_tree, last_node);
     }
-
-    return &last_node->children;
+    return last_node;
 }
 
-FileMetadataNode* visited_tree_insert(rb_tree_t* tree, FileMetadata* fm) {
-    rb_tree_t* sha256_tree = visited_tree_find_or_create_sha256_tree(tree, fm);
+void populate_sha256_if_empty(FileMetadata* fm) {
+    // if populated, return
+    if (memcmp(fm->sha256, EMPTY_SHA256, 32)) {
+        return;
+    }
+
+    int fd = open(fm->path, O_RDONLY);
+    char* buffer = mmap((caddr_t) 0,
+                        fm->size,
+                        PROT_READ,
+                        MAP_PRIVATE,
+                        fd,
+                        0);
+    if (buffer == MAP_FAILED) {
+        fprintf(stderr, "failed to mmap %s\n", fm->path);
+        perror("could not mmap");
+        return;
+    }
+
+    //
+    // calculate SHA-256
+    //
+
+    CC_SHA256_CTX c = { 0 };
+    CC_SHA256_Init(&c);
+    int err = CC_SHA256_Update(&c, buffer, fm->size);
+    if (err != 1) {
+        fprintf(stderr, "error: %d\n", err);
+        perror("sha256 error");
+        return;
+    }
+
+    munmap(buffer, fm->size);
+    close(fd);
+
+    CC_SHA256_Final(fm->sha256, &c);
+}
+
+FileMetadata* visited_tree_insert(rb_tree_t* tree, FileMetadata* fm) {
+    CharNode* last_node = visited_tree_find_or_create_last_node(tree, fm);
+    rb_tree_t* sha256_tree = &last_node->children;
+
+    if (rb_tree_count(&last_node->children) == 0) {
+        // if there aren't any children this may be a new node
+        // or it may already have a shortcut in place.
+        if (last_node->fm == NULL) {
+            last_node->fm = metadata_dup(fm);
+            return NULL;
+        } else {
+            populate_sha256_if_empty(last_node->fm);
+            populate_sha256_if_empty(fm);
+
+            if (memcmp(last_node->fm->sha256, fm->sha256, 32) == 0) {
+                // the shortcut node is the same, return a
+                // pointer to the original node
+                return last_node->fm;
+            } else {
+                // the shortcut node is not the same, it needs to
+                // be inserted into the tree along with the new
+                // node
+                FileMetadataNode* last_fm_node = calloc(1, sizeof(FileMetadataNode));
+                last_fm_node->fm = *last_node->fm;
+                rb_tree_insert_node(sha256_tree, last_fm_node);
+                // n.b.! the path string is now owned by the FM
+                //       in the FileMetadataNode. It is not
+                //       freed here.
+                free(last_node->fm); last_node->fm = NULL;
+
+                FileMetadataNode* fm_node = calloc(1, sizeof(FileMetadataNode));
+                fm_node->fm = *fm;
+                rb_tree_insert_node(sha256_tree, last_fm_node);
+                return NULL;
+            }
+        }
+    }
 
     FileMetadataNode* existing = rb_tree_find_node(sha256_tree, fm->sha256);
     if (existing) {
-        return existing;
+        return &existing->fm;
     }
 
     FileMetadataNode* fm_node = malloc(sizeof(FileMetadataNode));

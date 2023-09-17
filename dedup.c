@@ -50,7 +50,6 @@ static char sccsid[] = "@(#)dedup.c)";
 #include <sys/sysctl.h>
 
 #include <assert.h>
-#include <CommonCrypto/CommonDigest.h>
 #include <fts.h>
 #include <getopt.h>
 #include <pthread.h>
@@ -233,26 +232,11 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
         fm.last = buffer[fm.size - 1];
     }
 
-    //
-    // calculate SHA-256
-    //
-
-    CC_SHA256_CTX c = { 0 };
-    CC_SHA256_Init(&c);
-    err = CC_SHA256_Update(&c, buffer, fm.size);
-    if (err != 1) {
-        fprintf(stderr, "error: %d\n", err);
-        perror("sha256 error");
-        return;
-    }
-
     munmap(buffer, fm.size);
     close(fd);
 
-    CC_SHA256_Final(fm.sha256, &c);
-
     pthread_mutex_lock(&ctx->visited_mutex);
-    FileMetadataNode* old = visited_tree_insert(ctx->visited, &fm);
+    FileMetadata* old = visited_tree_insert(ctx->visited, &fm);
     pthread_mutex_unlock(&ctx->visited_mutex);
 
     if (old) {
@@ -260,7 +244,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
         pthread_mutex_lock(&ctx->duplicates_mutex);
         AList* list = duplicate_tree_find(ctx->duplicates, &fm);
         if (alist_empty(list)) {
-            alist_add(list, metadata_dup(&old->fm));
+            alist_add(list, metadata_dup(old));
         }
 
         if (ctx->verbosity) {
@@ -279,7 +263,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
         alist_add(list, metadata_dup(&fm));
         pthread_mutex_unlock(&ctx->duplicates_mutex);
 
-        if (fm.clone_id != old->fm.clone_id) {
+        if (fm.clone_id != old->clone_id) {
             pthread_mutex_lock(&ctx->metrics_mutex);
             ctx->found++;
             pthread_mutex_unlock(&ctx->metrics_mutex);
@@ -287,7 +271,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
                 PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
                     clear_progress();
                     printf("'%s' is duplicated by '%s' (%zu bytes) [found: %zu]\n",
-                           old->fm.path,
+                           old->path,
                            fm.path,
                            fm.size,
                            ctx->found);
@@ -766,6 +750,14 @@ int main(int argc, char* argv[]) {
 
         // the file cannot be empty
         if (entry->fts_statp->st_size == 0) {
+            continue;
+        }
+
+        // the file looks like a previously failed clone
+        if (strnlen(entry->fts_path, PATH_MAX) > 3 &&
+            entry->fts_path[0] == '.' &&
+            entry->fts_path[1] == '~' &&
+            entry->fts_path[2] == '.') {
             continue;
         }
 
