@@ -145,6 +145,24 @@ the same permissions, metadata, and ACLs. Support for copying metadata comes
 from
 [`copyfile(3)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/copyfile.3.html)
 
+`dedup` shouldn't be used on directories or files where files are actively being
+modified. In it's current implementation `dedup` doesn't lock any files which
+causes several race conditions if underlying files are being modified. If a file
+acting as a clone source or target is modified between any of the following
+events, a file may be replaced by something that resembles it's previous state.
+
+1. File metadata retrieval and comparison to previously seen files
+2. Creation of a clone from a source
+3. Application of file metadata from the target
+4. Replacing the target with the clone
+
+For example, if file *a* is seen and later file *b* is found to be a match, *a*
+may be changed, causing *b* to be cloned to its new content. Likewise, file *b*
+may be changed and then overwritten by a clone with it's previous content.
+
+It may be reasonable for future versions to include additional checks and locks
+to ensure modifications are detected prior to clone replacement.
+
 # HISTORY
 
 If the author was more clever, he might have named this program
@@ -260,6 +278,20 @@ A [patched version of du(1)](https://github.com/hohle/file_cmds/commit/6fd06e315
 will also ignore clones it encounters multiple times just like hard links
 to the same inode are ignored. The the patched `du` will display smaller
 block usage if data can be deduplicated.
+
+If you want to ensure a directory contains the same content before and after
+running **dedup**, you can create a checksum file and validate it immediately
+after cloning:
+
+```bash
+TARGET_TREE=some/path
+find "$TARGET_TREE" -type f -print0 | xargs -0 -n1 shasum -a 256 > original.sha256
+dedup "$TARGET_TREE"
+shasum -c original.sha256 | grep -v ': OK$'
+```
+
+The final command should output nothing (`$?` will be `1` because `grep`
+selects no lines).
 
 ## Are Any Others Operating Systems Supported?
 

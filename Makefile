@@ -1,6 +1,6 @@
 LANG = en
 
-VERSION ?= 0.0.3
+VERSION ?= 0.0.4
 
 CFLAGS += \
 	-std=gnu2x \
@@ -18,7 +18,6 @@ CFLAGS += \
     -ftrapv \
     -pipe \
     -fstack-protector \
-    -fsanitize=address \
     -fno-omit-frame-pointer \
     -mtune=generic \
     -O \
@@ -38,9 +37,10 @@ ENTITLEMENT_FLAGS =
 dedup.arm: CFLAGS += -target arm64-apple-macos13
 dedup.x86_64: CFLAGS += -target x86_64-apple-macos13
 
-dedup dedup.arm dedup.x86_64: dedup.c alist.o clone.o map.o progress.o queue.o
+dedup dedup.arm dedup.x86_64: dedup.o alist.o clone.o map.o progress.o queue.o
 	rm -f dedup.gcda dedup.gcno
-	$(CC) $(CFLAGS) -o $@.unsigned $^
+	$(CC) $(CFLAGS) -o $@ $^
+	mv $@ $@.unsigned
 	codesign -s - -v -f $(ENTITLEMENT_FLAGS) $@.unsigned
 	mv $@.unsigned $@
 
@@ -60,10 +60,12 @@ check-build: CFLAGS += \
         -DNDEBUG \
         -ftest-coverage \
         -fprofile-arcs \
-        -fsanitize-address-use-after-return=always \
         -g \
-        -O0
+        -O0 \
+        -fsanitize=address \
+        -fsanitize-address-use-after-return=always
 check-build: dedup
+	dsymutil dedup
 check: check-build
 	cd test && make check
 

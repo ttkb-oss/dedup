@@ -143,6 +143,9 @@ int replace_with_clone(const char* src, const char* dst) {
         return ENOENT;
     }
 
+    // TODO: use COPYFILE_CHECK to verify that nothing
+    //       would be copied back to the original file
+
     result = rename(path, dst);
     if (result) {
         perror("could not replace existing file");

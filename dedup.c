@@ -203,7 +203,10 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
 
     int err = getattrlist(fm.path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
     if (err) {
-        perror("could not getattrlist");
+        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
+            clear_progress();
+            perror("getattrlist(2)");
+        });
         return;
     }
 
@@ -279,6 +282,8 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             }
         }
     }
+
+    free(fm.path);
 }
 
 void* dedup_work(void* ctx) {
@@ -349,6 +354,8 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
                     printf("\t%s\n", fm->path);
                 }
             }
+            free_clone_id_counts(clone_counts);
+            clone_counts = NULL;
             return 0;
         }
 
@@ -696,12 +703,16 @@ int main(int argc, char* argv[]) {
     while ((entry = fts_read(traversal)) != NULL) {
         if (entry->fts_errno) {
             char* e = strerror(entry->fts_errno);
-            fprintf(stderr,
-                    "%s: error (%d): %s\n",
-                    entry->fts_path,
-                    entry->fts_errno,
-                    e);
-            exit(1);
+            PROGRESS_LOCK(dc.progress, &dc.progress_mutex, {
+                clear_progress();
+                fprintf(stderr,
+                        "%s: error (%d): %s\n",
+                        entry->fts_path,
+                        entry->fts_errno,
+                        e);
+                display_progress(dc.progress);
+            });
+            continue;
         }
 
         if (entry->fts_level > (max_depth + 1)) {
@@ -783,6 +794,9 @@ int main(int argc, char* argv[]) {
             dedup_work(&dc);
         }
     }
+
+    fts_close(traversal);
+
     pthread_mutex_lock(&dc.done_mutex);
     dc.done = 1;
     pthread_mutex_unlock(&dc.done_mutex);
@@ -800,23 +814,17 @@ int main(int argc, char* argv[]) {
     }
     free(threads); threads = NULL;
 
+    free_file_entry_queue(queue); queue = NULL;
+    free_visited_tree(dc.visited); dc.visited = NULL;
+
     if (dc.progress) {
         clear_progress();
     }
     printf("duplicates found: %zu\n", dc.found);
 
-    fts_close(traversal);
-
     SHA256ListNode* duplicate_set = NULL;
     RB_TREE_FOREACH(duplicate_set, dc.duplicates) {
         deduplicate(duplicate_set->list, &dc);
-        for (size_t i = 0; i < alist_size(duplicate_set->list); i++) {
-            FileMetadata* fm = alist_get(duplicate_set->list, i);
-            free_metadata(fm);
-            alist_set(duplicate_set->list, i, NULL);
-        }
-        free_alist(duplicate_set->list);
-        duplicate_set->list = NULL;
     }
 
     printf("bytes saved: ");
@@ -835,5 +843,6 @@ int main(int argc, char* argv[]) {
     }
     putchar('\n');
 
+    free_duplicate_tree(dc.duplicates); dc.duplicates = NULL;
     return 0;
 }

@@ -44,7 +44,7 @@ void free_alist(AList* list) {
 }
 
 AList* alist_dup(const AList* list) {
-    // tODO
+    // TODO
     return NULL;
 }
 

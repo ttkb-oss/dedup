@@ -36,7 +36,13 @@ typedef struct Progress {
     char* note;
 } Progress;
 
+/// Disables further progress output until `enable_progress` is called. This is
+/// useful for scenarios where a global event has occurred (like a signal being
+/// caught.
+void disable_progress();
+void enable_progress();
+
 void display_progress(const Progress* progress);
 void clear_progress();
 
-#endif // __DEDUP_PROGRESS_H__ 
+#endif // __DEDUP_PROGRESS_H__

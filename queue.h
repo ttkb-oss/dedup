@@ -49,6 +49,7 @@ typedef struct FileEntry {
 
 
 FileEntryHead* new_file_entry_queue();
+void free_file_entry_queue(FileEntryHead* queue);
 void file_entry_queue_append(FileEntryHead* queue,
                              char* path,
                              dev_t device,

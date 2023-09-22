@@ -36,6 +36,10 @@ FileEntryHead* new_file_entry_queue() {
     return head;
 }
 
+void free_file_entry_queue(FileEntryHead* queue) {
+    free(queue);
+}
+
 void file_entry_queue_append(FileEntryHead* queue,
                              char* path,
                              dev_t device,

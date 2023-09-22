@@ -118,7 +118,6 @@ typedef struct DeviceNode {
     dev_t d;
 } DeviceNode;
 
-FileMetadataNode* new_node(FileMetadata fm) __attribute__((malloc));
 rb_tree_t* new_visited_tree() ATTR_MALLOC(free_visited_tree, 1);
 FileMetadata* visited_tree_insert(rb_tree_t* tree, FileMetadata* fm);
 size_t visited_tree_count(rb_tree_t* dup_tree) __attribute__((pure));
@@ -133,11 +132,11 @@ void free_visited_tree(rb_tree_t* t);
 
 typedef struct SHA256ListNode {
     rb_node_t node;
-    uint8_t sha256[32];
     AList* list;
+    uint8_t sha256[32];
 } SHA256ListNode;
 
-rb_tree_t* new_duplicate_tree();
+rb_tree_t* new_duplicate_tree() ATTR_MALLOC(free_duplicate_tree, 1);
 AList* duplicate_tree_find(rb_tree_t* tree, FileMetadata* fm);
 size_t duplicate_tree_count(rb_tree_t* vis_tree);
 void free_duplicate_tree(rb_tree_t* t);

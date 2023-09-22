@@ -135,6 +135,63 @@ rb_tree_t* new_visited_tree() {
     return t;
 }
 
+void free_metadata_node(FileMetadataNode* fm_node) {
+    free(fm_node->fm.path);
+    free(fm_node);
+}
+
+void free_last_node(CharNode* last_node) {
+    if (last_node->fm) {
+        free_metadata(last_node->fm);
+        last_node->fm = NULL;
+    }
+
+    FileMetadataNode* fm_node = NULL;
+
+    while ((fm_node = RB_TREE_MIN(&last_node->children))) {
+        rb_tree_remove_node(&last_node->children, fm_node);
+        free_metadata_node(fm_node);
+        fm_node = NULL;
+    }
+    free(last_node); last_node = NULL;
+}
+
+void free_first_node(CharNode* first_node) {
+    CharNode* last_node = NULL;
+    while ((last_node = RB_TREE_MIN(&first_node->children))) {
+        rb_tree_remove_node(&first_node->children, last_node);
+        free_last_node(last_node);
+    };
+    free(first_node); first_node = NULL;
+}
+
+void free_size_node(SizeNode* size_node) {
+    CharNode* first_node = NULL;
+    while ((first_node = RB_TREE_MIN(&size_node->children))) {
+        rb_tree_remove_node(&size_node->children, first_node);
+        free_first_node(first_node);
+    }
+    free(size_node); size_node = NULL;
+}
+
+void free_device_node(DeviceNode* device_node) {
+    SizeNode* size_node = NULL;
+    while ((size_node = RB_TREE_MIN(&device_node->children))) {
+        rb_tree_remove_node(&device_node->children, size_node);
+        free_size_node(size_node);
+    }
+    free(device_node); device_node = NULL;
+}
+
+void free_visited_tree(rb_tree_t* tree) {
+    DeviceNode* node = NULL;
+    while ((node = RB_TREE_MIN(tree))) {
+        rb_tree_remove_node(tree, node);
+        free_device_node(node);
+    }
+    free(tree);
+}
+
 rb_tree_t* visited_tree_find_or_create_last_tree(rb_tree_t* tree, FileMetadata* fm) {
     DeviceNode* device_node = rb_tree_find_node(tree, &fm->device);
     if (!device_node) {
@@ -180,13 +237,22 @@ CharNode* visited_tree_find_or_create_last_node(rb_tree_t* tree, FileMetadata* f
     return last_node;
 }
 
-void populate_sha256_if_empty(FileMetadata* fm) {
+#define SHA_IS_EMPTY(sha) \
+    (memcmp((sha), EMPTY_SHA256, 32) == 0)
+
+int populate_sha256_if_empty(FileMetadata* fm) {
     // if populated, return
-    if (memcmp(fm->sha256, EMPTY_SHA256, 32)) {
-        return;
+    if (!SHA_IS_EMPTY(fm->sha256)) {
+        return 0;
     }
 
     int fd = open(fm->path, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "failed to mmap %s\n", fm->path);
+        perror("open");
+        return 2;
+    }
+
     char* buffer = mmap((caddr_t) 0,
                         fm->size,
                         PROT_READ,
@@ -195,8 +261,8 @@ void populate_sha256_if_empty(FileMetadata* fm) {
                         0);
     if (buffer == MAP_FAILED) {
         fprintf(stderr, "failed to mmap %s\n", fm->path);
-        perror("could not mmap");
-        return;
+        perror("mmap");
+        return 2;
     }
 
     //
@@ -208,14 +274,15 @@ void populate_sha256_if_empty(FileMetadata* fm) {
     int err = CC_SHA256_Update(&c, buffer, fm->size);
     if (err != 1) {
         fprintf(stderr, "error: %d\n", err);
-        perror("sha256 error");
-        return;
+        perror("CC_SHA256_Update");
+        return 3;
     }
 
     munmap(buffer, fm->size);
     close(fd);
 
-    CC_SHA256_Final(fm->sha256, &c);
+    int r = CC_SHA256_Final(fm->sha256, &c);
+    return !r;
 }
 
 FileMetadata* visited_tree_insert(rb_tree_t* tree, FileMetadata* fm) {
@@ -229,8 +296,24 @@ FileMetadata* visited_tree_insert(rb_tree_t* tree, FileMetadata* fm) {
             last_node->fm = metadata_dup(fm);
             return NULL;
         } else {
-            populate_sha256_if_empty(last_node->fm);
-            populate_sha256_if_empty(fm);
+            if (populate_sha256_if_empty(last_node->fm) ||
+                SHA_IS_EMPTY(last_node->fm->sha256)) {
+                fprintf(stderr,
+                        "Could not compute SHA-256 for %s\n",
+                        last_node->fm->path);
+                free(last_node->fm);
+                last_node->fm = metadata_dup(fm);
+                return NULL;
+
+            }
+
+            if (populate_sha256_if_empty(fm) ||
+                SHA_IS_EMPTY(fm->sha256)) {
+                fprintf(stderr,
+                        "Could not compute SHA-256 for %s\n",
+                        fm->path);
+                return NULL;
+            }
 
             if (memcmp(last_node->fm->sha256, fm->sha256, 32) == 0) {
                 // the shortcut node is the same, return a
@@ -250,10 +333,19 @@ FileMetadata* visited_tree_insert(rb_tree_t* tree, FileMetadata* fm) {
 
                 FileMetadataNode* fm_node = calloc(1, sizeof(FileMetadataNode));
                 fm_node->fm = *fm;
-                rb_tree_insert_node(sha256_tree, last_fm_node);
+                fm_node->fm.path = strdup(fm->path);
+                rb_tree_insert_node(sha256_tree, fm_node);
                 return NULL;
             }
         }
+    }
+
+    if (populate_sha256_if_empty(fm) ||
+        SHA_IS_EMPTY(fm->sha256)) {
+        fprintf(stderr,
+                "Could not compute SHA-256 for %s\n",
+                fm->path);
+        return NULL;
     }
 
     FileMetadataNode* existing = rb_tree_find_node(sha256_tree, fm->sha256);
@@ -263,6 +355,7 @@ FileMetadata* visited_tree_insert(rb_tree_t* tree, FileMetadata* fm) {
 
     FileMetadataNode* fm_node = malloc(sizeof(FileMetadataNode));
     fm_node->fm = *fm;
+    fm_node->fm.path = strdup(fm->path);
     rb_tree_insert_node(sha256_tree, fm_node);
 
     return NULL;
@@ -350,9 +443,24 @@ size_t duplicate_tree_count(rb_tree_t* vis_tree) {
     return count;
 }
 
-void free_duplicate_tree(rb_tree_t* t) {
+void free_sha256_list_node(SHA256ListNode* n) {
+    for (size_t i = 0; i < alist_size(n->list); i++) {
+        FileMetadata* fm = alist_get(n->list, i);
+        free_metadata(fm);
+        alist_set(n->list, i, NULL);
+    }
+    free_alist(n->list); n->list = NULL;
+    free(n);
 }
 
+void free_duplicate_tree(rb_tree_t* t) {
+    SHA256ListNode* node = NULL;
+    while ((node = RB_TREE_MIN(t))) {
+        rb_tree_remove_node(t, node);
+        free_sha256_list_node(node);
+    }
+    free(t);
+}
 
 signed int compare_metadata_clone_id_node(void *context, const void *node1, const void *node2) {
     const IDCountNode* a = node1, * b = node2;
