@@ -212,31 +212,49 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
 
     fm.clone_id = clone_id.value;
 
-    int fd = open(fm.path, O_RDONLY);
-    char* buffer = mmap((caddr_t) 0,
-                        fm.size,
-                        PROT_READ,
-                        MAP_PRIVATE,
-                        fd,
-                        0);
-    if (buffer == MAP_FAILED) {
-        fprintf(stderr, "failed to mmap %s\n", fm.path);
-        perror("could not mmap");
-        return;
-    }
-
     //
     // first and last characters
     //
-    if (fm.size == 0) {
-        fm.first = fm.last = '\0';
-    } else {
-        fm.first = buffer[0];
-        fm.last = buffer[fm.size - 1];
+
+    FILE* f = fopen(fm.path, "r");
+    if (!f) {
+        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
+            clear_progress();
+            fprintf(stderr, "failed to open %s\n", fm.path);
+            perror("open(2)");
+        });
+        return;
     }
 
-    munmap(buffer, fm.size);
-    close(fd);
+    int c = fgetc(f);
+    if (c < 0) {
+        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
+            fprintf(stderr, "failed read first byte %s\n", fm.path);
+            perror("fgetc(3)");
+        });
+        return;
+    }
+    fm.first = c;
+
+    if (fseek(f, -1, SEEK_END) < 0) {
+        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
+            fprintf(stderr, "failed seek %s\n", fm.path);
+            perror("fseek(3)");
+        });
+        return;
+    }
+
+    c = fgetc(f);
+    if (c < 0) {
+        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
+            fprintf(stderr, "failed read last byte %s\n", fm.path);
+            perror("fgetc(3)");
+        });
+        return;
+    }
+    fm.last = c;
+
+    fclose(f);
 
     pthread_mutex_lock(&ctx->visited_mutex);
     FileMetadata* old = visited_tree_insert(ctx->visited, &fm);
