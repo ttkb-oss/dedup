@@ -44,7 +44,6 @@ static char sccsid[] = "@(#)dedup.c)";
 
 #define _DARWIN_FEATURE_64_BIT_INODE
 
-#include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -62,8 +61,7 @@ static char sccsid[] = "@(#)dedup.c)";
 #include "map.h"
 #include "progress.h"
 #include "queue.h"
-
-#define ATTR_BITMAP_COUNT 5
+#include "utils.h"
 
 #define PROGRESS_LOCK(p, m, block) do { \
         if ((p)) { \
@@ -93,177 +91,30 @@ typedef struct DedupContext {
     pthread_mutex_t done_mutex;
 } DedupContext;
 
-uint64_t get_clone_id(const char* restrict path) {
-    struct attrlist attrList = {
-        .bitmapcount = ATTR_BITMAP_COUNT,
-        .forkattr = ATTR_CMNEXT_CLONEID,
-    };
-
-    struct UInt64Ref {
-        uint32_t length;
-        uint64_t value;
-    } __attribute((aligned(4), packed));
-    struct UInt64Ref clone_id = { 0 };
-
-    int err = getattrlist(path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
-    if (err) {
-        perror("could not getattrlist");
-        return 0;
-    }
-
-    return clone_id.value;
-}
-
-int may_share_blocks(const char* restrict path) {
-    struct attrlist attrList = {
-        .bitmapcount = ATTR_BITMAP_COUNT,
-        .forkattr = ATTR_CMNEXT_EXT_FLAGS,
-    };
-
-    struct UInt64Ref {
-        uint32_t length;
-        uint64_t value;
-    } __attribute((aligned(4), packed));
-    struct UInt64Ref clone_id = { 0 };
-
-    int err = getattrlist(path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
-    if (err) {
-        perror("could not getattrlist");
-        return 0;
-    }
-
-    return clone_id.value | EF_MAY_SHARE_BLOCKS;
-}
-
-size_t private_size(const char* restrict path) {
-    struct attrlist attrList = {
-        .bitmapcount = ATTR_BITMAP_COUNT,
-        .forkattr = ATTR_CMNEXT_PRIVATESIZE,
-    };
-
-    struct UInt64Ref {
-        uint32_t length;
-        off_t size;
-    } __attribute((aligned(4), packed));
-    struct UInt64Ref size_attr = { 0 };
-
-    int err = getattrlist(path, &attrList, &size_attr, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
-    if (err) {
-        perror("could not getattrlist");
-        return 0;
-    }
-
-    return size_attr.size;
-}
-
 
 void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
 
-    FileMetadata fm = { 0 };
+    FileMetadata* fm = metadata_from_entry(fe);
 
-    //
-    // stat attrs
-    //
-
-    fm.device = fe->device;
-    fm.inode = fe->inode;
-    fm.nlink = fe->nlink;
-
-    //
-    // file size
-    //
-
-    fm.size = fe->size;
-
-    //
-    // file real path
-    //
-    fm.path = strdup(fe->path);
-
-    //
-    // get clone id
-    //
-    fm.clone_id = get_clone_id(fe->path);
-
-    if (!fm.clone_id) {
-        free(fm.path); fm.path = NULL;
-        return;
-    }
-
-    struct attrlist attrList = {
-        .bitmapcount = ATTR_BITMAP_COUNT,
-        .forkattr = ATTR_CMNEXT_CLONEID,
-    };
-
-    struct UInt64Ref {
-        uint32_t length;
-        uint64_t value;
-    } __attribute((aligned(4), packed));
-    struct UInt64Ref clone_id = { 0 };
-
-    int err = getattrlist(fm.path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
-    if (err) {
+    if (!fm) {
         PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
             clear_progress();
-            perror("getattrlist(2)");
+            fprintf(stderr,
+                    "could not populate metadata for %s\n",
+                    fe->path);
+            perror("metadata_from_entry");
         });
         return;
     }
-
-    fm.clone_id = clone_id.value;
-
-    //
-    // first and last characters
-    //
-
-    FILE* f = fopen(fm.path, "r");
-    if (!f) {
-        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
-            clear_progress();
-            fprintf(stderr, "failed to open %s\n", fm.path);
-            perror("open(2)");
-        });
-        return;
-    }
-
-    int c = fgetc(f);
-    if (c < 0) {
-        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
-            fprintf(stderr, "failed read first byte %s\n", fm.path);
-            perror("fgetc(3)");
-        });
-        return;
-    }
-    fm.first = c;
-
-    if (fseek(f, -1, SEEK_END) < 0) {
-        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
-            fprintf(stderr, "failed seek %s\n", fm.path);
-            perror("fseek(3)");
-        });
-        return;
-    }
-
-    c = fgetc(f);
-    if (c < 0) {
-        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
-            fprintf(stderr, "failed read last byte %s\n", fm.path);
-            perror("fgetc(3)");
-        });
-        return;
-    }
-    fm.last = c;
-
-    fclose(f);
 
     pthread_mutex_lock(&ctx->visited_mutex);
-    FileMetadata* old = visited_tree_insert(ctx->visited, &fm);
+    FileMetadata* old = visited_tree_insert(ctx->visited, fm);
     pthread_mutex_unlock(&ctx->visited_mutex);
 
     if (old) {
 
         pthread_mutex_lock(&ctx->duplicates_mutex);
-        AList* list = duplicate_tree_find(ctx->duplicates, &fm);
+        AList* list = duplicate_tree_find(ctx->duplicates, fm);
         if (alist_empty(list)) {
             alist_add(list, metadata_dup(old));
         }
@@ -272,7 +123,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
                 clear_progress();
                 printf("%s has %zu duplicates\n",
-                       fm.path,
+                       fm->path,
                        alist_size(list));
                 for (size_t i = 0; i < alist_size(list); i++) {
                     printf("\t%s\n",
@@ -281,10 +132,11 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             });
         }
 
-        alist_add(list, metadata_dup(&fm));
+        // ownership transferred to the list
+        alist_add(list, fm);
         pthread_mutex_unlock(&ctx->duplicates_mutex);
 
-        if (fm.clone_id != old->clone_id) {
+        if (fm->clone_id != old->clone_id) {
             pthread_mutex_lock(&ctx->metrics_mutex);
             ctx->found++;
             pthread_mutex_unlock(&ctx->metrics_mutex);
@@ -293,15 +145,15 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
                     clear_progress();
                     printf("'%s' is duplicated by '%s' (%zu bytes) [found: %zu]\n",
                            old->path,
-                           fm.path,
-                           fm.size,
+                           fm->path,
+                           fm->size,
                            ctx->found);
                 });
             }
         }
+    } else {
+        free_metadata(fm);
     }
-
-    free(fm.path);
 }
 
 void* dedup_work(void* ctx) {
@@ -688,6 +540,14 @@ int main(int argc, char* argv[]) {
         ? argv
         : (char**) DEFAULT_PATHS;
 
+    for (int i = 0; i < argc; i++) {
+        if (access(argv[i], F_OK) < 0) {
+            fprintf(stderr, "cannot open %s\n", argv[i]);
+            perror("access(2)");
+            return 1;
+        }
+    }
+
     FTS* traversal = fts_open(paths,
                               FTS_NOCHDIR | FTS_PHYSICAL | user_fts_options,
                               NULL);
@@ -699,7 +559,7 @@ int main(int argc, char* argv[]) {
     // LCOV_EXCL_START
     if (!traversal) {
         perror("Could not open starting directories");
-        exit(1);
+        return 1;
     }
     // LCOV_EXCL_STOP
 

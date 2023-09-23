@@ -37,7 +37,7 @@ ENTITLEMENT_FLAGS =
 dedup.arm: CFLAGS += -target arm64-apple-macos13
 dedup.x86_64: CFLAGS += -target x86_64-apple-macos13
 
-dedup dedup.arm dedup.x86_64: dedup.o alist.o clone.o map.o progress.o queue.o
+dedup dedup.arm dedup.x86_64: dedup.o alist.o clone.o map.o progress.o queue.o utils.o
 	rm -f dedup.gcda dedup.gcno
 	$(CC) $(CFLAGS) -o $@ $^
 	mv $@ $@.unsigned
@@ -55,17 +55,23 @@ universal-dedup: dedup.universal
 	codesign -s - -v -f $(ENTITLEMENT_FLAGS) dedup.universal
 	cp -c dedup.universal dedup
 
-check-build: ENTITLEMENT_FLAGS = --entitlements entitlement.plist
-check-build: CFLAGS += \
+# leaks-build is a debug build without ASAN to be used with `leaks(1)`,
+# Instruments, and other tools that don't want to evaluate libasan because it
+# isn't a system library.
+leaks-build: ENTITLEMENT_FLAGS = --entitlements entitlement.plist
+leaks-build: CFLAGS += \
         -DNDEBUG \
         -ftest-coverage \
         -fprofile-arcs \
         -g \
-        -O0 \
+        -O0
+leaks-build: dedup
+	dsymutil dedup
+
+check-build: CFLAGS += \
         -fsanitize=address \
         -fsanitize-address-use-after-return=always
-check-build: dedup
-	dsymutil dedup
+check-build: leaks-build
 check: check-build
 	cd test && make check
 
