@@ -42,8 +42,6 @@ static char sccsid[] = "@(#)dedup.c)";
 #endif // 0
 #endif // lint
 
-#define _DARWIN_FEATURE_64_BIT_INODE
-
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -109,10 +107,10 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
 
     pthread_mutex_lock(&ctx->visited_mutex);
     FileMetadata* old = visited_tree_insert(ctx->visited, fm);
+    old = metadata_dup(old);
     pthread_mutex_unlock(&ctx->visited_mutex);
 
     if (old) {
-
         pthread_mutex_lock(&ctx->duplicates_mutex);
         AList* list = duplicate_tree_find(ctx->duplicates, fm);
         if (alist_empty(list)) {
@@ -151,6 +149,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
                 });
             }
         }
+        free_metadata(old);
     } else {
         free_metadata(fm);
     }
@@ -229,10 +228,43 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
             return 0;
         }
 
-        origin = clone_id_tree_max(clone_counts);
+        // none of the files are cloned (they all of a clone count of 1)
         if (rb_tree_count(clone_counts) == alist_size(metadata_set)) {
-            reason = "first seen";
+            // find the first file that is not compressed
+            //
+            // n.b.! transparently compressed files will have the UF_COMPRESSED
+            //       flag set, compressed data in the resource fork, and an
+            //       xattr named `com.apple.decmpfs`. since the data for the
+            //       file is actually stored in metadata, these files cannot
+            //       share data blocks, so they are worthless for using as
+            //       clone origins.
+            for (size_t i = 0; i < alist_size(metadata_set); i++) {
+                FileMetadata* fm = alist_get(metadata_set, i);
+                if (fm->flags & UF_COMPRESSED) {
+                    if (ctx->verbosity > 1) {
+                        printf("found a compressed file: %s\n", fm->path);
+                    }
+                    continue;
+                }
+                origin = fm;
+                reason = "first seen";
+                break;
+            }
+
+            if (!origin) {
+                if (ctx->verbosity) {
+                    printf("All files in this set use HFS compression. Remove HFS compression from at least one to "
+                           "replace with clones:\n");
+                    for (size_t i = 0; i < alist_size(metadata_set); i++) {
+                        FileMetadata* fm = alist_get(metadata_set, i);
+                        printf("\t%s\n", fm->path);
+                    }
+                }
+                free_clone_id_counts(clone_counts);
+                return 0;
+            }
         } else {
+            origin = clone_id_tree_max(clone_counts);
             reason = "most clones";
         }
         free_clone_id_counts(clone_counts);

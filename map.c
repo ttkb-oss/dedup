@@ -43,6 +43,10 @@ void free_metadata(FileMetadata* fm) {
 }
 
 FileMetadata* metadata_dup(FileMetadata* fm) {
+    if (!fm) {
+        return NULL;
+    }
+
     FileMetadata* copy = malloc(sizeof(FileMetadata));
     *copy = *fm;
     copy->path = strdup(fm->path);

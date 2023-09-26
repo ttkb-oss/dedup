@@ -107,6 +107,7 @@ FileMetadata* metadata_from_entry(FileEntry* fe) {
     fm->device = fe->device;
     fm->inode = fe->inode;
     fm->nlink = fe->nlink;
+    fm->flags = fe->flags;
 
     //
     // file size

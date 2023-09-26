@@ -1,6 +1,6 @@
 LANG = en
 
-VERSION ?= 0.0.4
+VERSION ?= 0.0.5
 
 CFLAGS += \
 	-std=gnu2x \
@@ -149,13 +149,3 @@ check-spelling-readme: README.md $(OUTPUT_DICT)
 	    xargs -n 1 printf "\\033[0;31m$< >>>\033[0m %s\n"
 
 check-spelling: check-spelling-readme check-spelling-man
-
-clonefile-bug: CFLAGS += \
-        -DNDEBUG \
-        -ftest-coverage \
-        -fprofile-arcs \
-        -fsanitize-address-use-after-return=always \
-        -g \
-        -O0
-clonefile-bug: clonefile-bug.o clone.o
-	$(CC) $(CFLAGS) -o $@ $^
