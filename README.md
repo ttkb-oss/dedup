@@ -1,3 +1,5 @@
+<img src="doc/banner.png" width="200px">
+
 # `dedup(1)`
 
 A macOS utility to replace duplicate file data with a copy-on-write clone.
@@ -44,6 +46,11 @@ used because clones were not available, future versions may provide a flag to
 destructively replace hard links with clones. Future versions may also consider
 cloning files with multiple hard links if all links are within the space being
 evaluated and two or more hard link clusters reference duplicated data.
+
+If all files in a matched set are compressed with HFS transparent compression,
+none of the files with be deduplicated. Future versions of **dedup** may
+select one file from the set to decompress in place and then use that file
+as a clone source.
 
 **dedup** will only work on volumes that have the `VOL_CAP_INT_CLONE`
 capability. Currently that is limited to APFS.
@@ -298,3 +305,15 @@ selects no lines).
 `dedup` leverages both file system support for creating clones as well as the
 appropriate system calls. [OpenZFS support for sharing blocks](https://github.com/openzfs/zfs/pull/13392)
 may make FreeBSD support possible in the future.
+
+## Why Aren't HFS Compressed Files Cloned?
+
+APFS supports HFS compression just as any file system with xattrs and support
+for flags would. Howver, HFS compression does not store data in a file's data
+fork, but in a file's xattrs. Since APFS clones data blocks, not file metadata,
+there's nothing to share between clones of HFS compressed files.
+
+HFS transparent compression uses a file's resource fork (the
+`com.apple.ResourceFork` xattr) along with a `com.apple.decmps` xattr
+describing compression details (algorithm, original file size), and the
+`UF_COMPRESSED` flag. There is no data in any data blocks (né data fork).

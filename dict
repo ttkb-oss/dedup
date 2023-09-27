@@ -1,3 +1,4 @@
+personal_ws-1.1 en 40 utf-8
 ACLs
 APFS
 APIs
@@ -6,8 +7,10 @@ CLICOLOR
 COLORTERM
 CPUs
 FreeBSD
+HFS
 Hohle
 Homebrew
+Howver
 LCOV
 LLC
 MERCHANTABILITY
@@ -31,5 +34,8 @@ hw
 inode
 macOS
 ncpu
+né
 sysctl
 tmp
+xattr
+xattrs

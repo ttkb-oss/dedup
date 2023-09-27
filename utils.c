@@ -98,40 +98,28 @@ size_t private_size(const char* restrict path) {
 }
 
 FileMetadata* metadata_from_entry(FileEntry* fe) {
-    FileMetadata* fm = calloc(1, sizeof(FileMetadata));
+    FileMetadata fm = {
+        //
+        // stat attrs
+        //
 
-    //
-    // stat attrs
-    //
+        .device = fe->device,
+        .inode = fe->inode,
+        .nlink = fe->nlink,
+        .flags = fe->flags,
 
-    fm->device = fe->device;
-    fm->inode = fe->inode;
-    fm->nlink = fe->nlink;
-    fm->flags = fe->flags;
+        //
+        // file size
+        //
 
-    //
-    // file size
-    //
-
-    fm->size = fe->size;
-
-    //
-    // file real path
-    //
-
-    fm->path = strdup(fe->path);
-
-    //
-    // get clone id
-    //
-
-    fm->clone_id = get_clone_id(fe->path);
+        .size = fe->size,
+    };
 
     //
     // first and last characters
     //
 
-    FILE* f = fopen(fm->path, "r");
+    FILE* f = fopen(fe->path, "r");
     if (!f) {
         /*
         PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
@@ -153,7 +141,7 @@ FileMetadata* metadata_from_entry(FileEntry* fe) {
         */
         return NULL;
     }
-    fm->first = c;
+    fm.first = c;
 
     if (fseek(f, -1, SEEK_END) < 0) {
         /*
@@ -175,9 +163,21 @@ FileMetadata* metadata_from_entry(FileEntry* fe) {
         */
         return NULL;
     }
-    fm->last = c;
-
     fclose(f);
 
-    return fm;
+    fm.last = c;
+
+    //
+    // file real path
+    //
+
+    fm.path = fe->path;
+
+    //
+    // get clone id
+    //
+
+    fm.clone_id = get_clone_id(fe->path);
+
+    return metadata_dup(&fm);
 }

@@ -3,7 +3,10 @@
 *.gcno
 *.o
 *.dSYM
+*.tidy
+.DS_Store
 build/
+compile_commands.json
 dedup
 dedup.arm64
 dedup.x86_64
