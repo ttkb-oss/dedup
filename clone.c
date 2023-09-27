@@ -26,6 +26,10 @@
 
 #include <sys/attr.h>
 #include <sys/clonefile.h>
+#include <sys/stat.h>
+#if defined(__FREEBSD__)
+#include <sys/ioctl.h>
+#endif
 
 #include <copyfile.h>
 #include <errno.h>
@@ -35,8 +39,6 @@
 #include <string.h>
 
 #include "clone.h"
-
-#include <sys/stat.h>
 
 int find_zero_file(const char* restrict path) {
     if (access(path, W_OK)) {
@@ -98,9 +100,36 @@ int replace_with_clone(const char* src, const char* dst) {
     }
 
     errno = 0;
-    int result = clonefile(src,
-                           path,
-                           0);
+    int result = 0;
+#if defined(__APPLE__)
+    result = clonefile(src, path, 0);
+#elif defined(__FREEBSD__)
+    // n.b.! This is completely untested and probably erases
+    //       everything it touches. There are currently no
+    //       equivalents to volume capability checks on the
+    //       frontend, so it's not even clear that the files
+    //       that are being passed in here are on a partition
+    //       that can be cloned.
+    int src_fd = open(src, O_RDONLY);
+    if (src_fd < 0) {
+        perror("open(2) failed");
+        return errno;
+    }
+    int dst_fd = open(path, O_WRONLY | O_CREAT | O_EXCL);
+    if (dst_fd < 0) {
+        close(src_fd);
+        perror("open(2) failed");
+        return errno;
+    }
+    result = ioctl(dst_fd, CF_FICLONE, src_fd);
+    int errno_saved = errno;
+    close(src_fd);
+    close(dst_fd);
+    errno = errno_saved;
+#else
+#error Operating system not supported.
+#endif
+
     if (result) {
         perror("could not clonefile");
         unlink(path); // if it exists
