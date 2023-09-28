@@ -35,6 +35,7 @@ inode
 macOS
 ncpu
 né
+symlink
 sysctl
 tmp
 xattr

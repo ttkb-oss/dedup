@@ -55,6 +55,16 @@ as a clone source.
 **dedup** will only work on volumes that have the `VOL_CAP_INT_CLONE`
 capability. Currently that is limited to APFS.
 
+While **dedup** is primarily intended to be used to save storage by using
+clones, but provides **-l** and **-s** flags to replace duplicates with hard
+links or symbolic links respectively. Care should be taken when using these
+options, however. Unlike clones, the replaced files share the metadata of one
+of the matched files, though it might not seem deterministic which one. If these
+options are used with automation where all files have default ownership and
+permissions, there should be little issue. The created files are also not
+copy-on-write and will share any modifications made. These options should only
+be used if the consequences of each choice are understood.
+
 # OPTIONS
 
 The following options are available:
@@ -73,6 +83,14 @@ The following options are available:
 
 > Evaluate all files and find all duplicates but only print what would be done
 > and do not modify any files.
+
+**-l**, **-&#45;link**
+
+> Replace duplicate files with hard links instead of clones. Replaced files will not retain their metadata.
+
+**-s**, **-&#45;symlink**
+
+> Replace duplicate files with symbolic links instead of clones. Replaced files will not retain their metadata.
 
 **-P**, **-&#45;no-progress**
 

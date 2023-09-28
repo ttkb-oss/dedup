@@ -69,6 +69,12 @@ static char sccsid[] = "@(#)dedup.c)";
         } \
     } while (0)
 
+typedef enum ReplaceMode {
+    DEDUP_CLONE    = 0,
+    DEDUP_LINK     = 1,
+    DEDUP_SYMLINK  = 2,
+} ReplaceMode;
+
 typedef struct DedupContext {
     Progress* progress;
     FileEntryHead* queue;
@@ -81,6 +87,7 @@ typedef struct DedupContext {
     uint8_t thread_count;
     bool dry_run;
     uint8_t verbosity;
+    ReplaceMode replace_mode;
     pthread_mutex_t metrics_mutex;
     pthread_mutex_t progress_mutex;
     pthread_mutex_t queue_mutex;
@@ -313,8 +320,19 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
             continue;
         }
 
-        int result = replace_with_clone(origin->path,
+        int result = 0;
+        switch (ctx->replace_mode) {
+        case DEDUP_CLONE:
+            result = replace_with_clone(origin->path,
                                         fm->path);
+            break;
+        case DEDUP_LINK:
+            result = link(origin->path, fm->path);
+            break;
+        case DEDUP_SYMLINK:
+            result = symlink(origin->path, fm->path);
+            break;
+        }
         if (result) {
             perror("clone failed");
             fprintf(stderr,
@@ -355,15 +373,17 @@ void usage(char* pgm, DedupContext* ctx) {
                 // "  --ignore, -I pattern     Exclude a pattern from being used as a clone\n"
                 // "                           source or being replaced by a clone. This option\n"
                 // "                           can be specified multiple times.\n"
-                "  --threads, -t n          The number of threads to use for file building\n"
-                "                           lookup tables and replacing clones. Default: %d\n"
                 "  --dry-run, -n            Don't replace file content, just print what \n"
                 "                           would have happend.\n"
+                "  --depth, -d depth        Don't descend further than the specified depth.\n"
                 "  --one-file-system, -x    Don't evaluate directories on a different device\n"
                 "                           than the starting paths.\n"
-                "  --depth, -d depth        Don't descend further than the specified depth.\n"
-                "  --color, -c              Enabled colored output.\n"
+                "  --link, -l               Use hardlinks instead of clones.\n"
+                "  --symlink, -s            Use symlinks instead of clones.\n"
+                // "  --color, -c              Enabled colored output.\n"
                 "  --no-progress, -P        Do not display a progress bar.\n"
+                "  --threads, -t n          The number of threads to use for file building\n"
+                "                           lookup tables and replacing clones. Default: %d\n"
                 "  --verbose, -v            Increase verbosity. May be used multiple times.\n"
                 "  --version, -V            Print the version and exit\n"
                 "  -h                       Human readable output.\n"
@@ -479,6 +499,7 @@ int main(int argc, char* argv[]) {
         .done = 0,
         .dry_run = false,
         .verbosity = 0,
+        .replace_mode = DEDUP_CLONE,
         .thread_count = cpu_count(),
         .metrics_mutex = PTHREAD_MUTEX_INITIALIZER,
         .progress_mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -489,16 +510,18 @@ int main(int argc, char* argv[]) {
     };
 
     static const struct option options[] = {
-        { "ignore", required_argument, NULL, 'I' },
-        { "threads", required_argument, NULL, 't' },
-        { "one-file-system", no_argument, NULL, 'x' },
-        { "depth", required_argument, NULL, 'd' },
-        { "color", optional_argument, NULL, 'c' },
-        { "dry-run", no_argument, NULL, 'n' },
-        { "verbose", no_argument, NULL, 'v' },
-        { "version", no_argument, NULL, 'V' },
-        { "no-progress", no_argument, NULL, 'P' },
-        { "help", no_argument, NULL, '?' },
+        { "ignore",          required_argument, NULL, 'I' },
+        { "no-progress",     no_argument,       NULL, 'P' },
+        { "version",         no_argument,       NULL, 'V' },
+        { "color",           optional_argument, NULL, 'c' },
+        { "depth",           required_argument, NULL, 'd' },
+        { "link",            no_argument,       NULL, 'l' },
+        { "dry-run",         no_argument,       NULL, 'n' },
+        { "symlink",         no_argument,       NULL, 's' },
+        { "threads",         required_argument, NULL, 't' },
+        { "verbose",         no_argument,       NULL, 'v' },
+        { "one-file-system", no_argument,       NULL, 'x' },
+        { "help",            no_argument,       NULL, '?' },
         { NULL, 0, NULL, 0 },
     };
 
@@ -506,10 +529,40 @@ int main(int argc, char* argv[]) {
 
     int ch = -1, t;
     short d;
-    while ((ch = getopt_long(argc, argv, "I:PVt:xd:c::nvh", options, NULL)) != -1) {
+    while ((ch = getopt_long(argc, argv, "I:PVc::d:hlnt:vx", options, NULL)) != -1) {
         switch (ch) {
             case 'I':
                 fprintf(stderr, "-I is unimplemented\n");
+                break;
+            case 'P':
+                dc.progress = NULL;
+                break;
+            case 'V':
+                fprintf(stderr, "%s\n", version);
+                return 1;
+            case 'c':
+                fprintf(stderr, "-c is unimplemented\n");
+                break;
+            case 'd':
+                d = atoi(optarg);
+                if (d < 0) {
+                    fprintf(stderr, "Depth must be a positive value: %s\n",
+                            optarg);
+                    usage(argv[0], &dc);
+                }
+                max_depth = d;
+                break;
+            case 'h':
+                human_readable = true;
+                break;
+            case 'l':
+                dc.replace_mode = DEDUP_LINK;
+                break;
+            case 'n':
+                dc.dry_run = true;
+                break;
+            case 's':
+                dc.replace_mode = DEDUP_SYMLINK;
                 break;
             case 't':
                 t = atoi(optarg);
@@ -521,35 +574,11 @@ int main(int argc, char* argv[]) {
                 }
                 dc.thread_count = t;
                 break;
-            case 'x':
-                user_fts_options |= FTS_XDEV;
-                break;
-            case 'd':
-                d = atoi(optarg);
-                if (d < 0) {
-                    fprintf(stderr, "Depth must be a positive value: %s\n",
-                            optarg);
-                    usage(argv[0], &dc);
-                }
-                max_depth = d;
-                break;
-            case 'c':
-                fprintf(stderr, "-c is unimplemented\n");
-                break;
-            case 'n':
-                dc.dry_run = true;
-                break;
-            case 'h':
-                human_readable = true;
-                break;
             case 'v':
                 dc.verbosity++;
                 break;
-            case 'V':
-                fprintf(stderr, "%s\n", version);
-                return 1;
-            case 'P':
-                dc.progress = NULL;
+            case 'x':
+                user_fts_options |= FTS_XDEV;
                 break;
             case '?':
             default:

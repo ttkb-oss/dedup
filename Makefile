@@ -7,7 +7,7 @@
 
 LANG = en
 
-VERSION ?= 0.0.5
+VERSION ?= 0.0.6
 
 CFLAGS += \
 	-std=gnu2x \

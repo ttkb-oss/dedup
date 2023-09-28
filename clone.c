@@ -25,13 +25,15 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 #include <sys/attr.h>
+#if defined(__APPLE__)
 #include <sys/clonefile.h>
+#include <copyfile.h>
+#endif
 #include <sys/stat.h>
 #if defined(__FREEBSD__)
 #include <sys/ioctl.h>
 #endif
 
-#include <copyfile.h>
 #include <errno.h>
 #include <libgen.h>
 #include <stdio.h>
@@ -93,16 +95,9 @@ char* tmp_name(const char* restrict path, char* restrict out, size_t size) {
     return out;
 }
 
-int replace_with_clone(const char* src, const char* dst) {
-    char path[PATH_MAX] = { 0 };
-    if (!tmp_name(dst, path, PATH_MAX)) {
-        return errno;
-    }
-
-    errno = 0;
-    int result = 0;
+int genfile_clone(const char* src, const char* dst) {
 #if defined(__APPLE__)
-    result = clonefile(src, path, 0);
+    return clonefile(src, dst, 0);
 #elif defined(__FREEBSD__)
     // n.b.! This is completely untested and probably erases
     //       everything it touches. There are currently no
@@ -115,7 +110,7 @@ int replace_with_clone(const char* src, const char* dst) {
         perror("open(2) failed");
         return errno;
     }
-    int dst_fd = open(path, O_WRONLY | O_CREAT | O_EXCL);
+    int dst_fd = open(dst, O_WRONLY | O_CREAT | O_EXCL);
     if (dst_fd < 0) {
         close(src_fd);
         perror("open(2) failed");
@@ -126,9 +121,20 @@ int replace_with_clone(const char* src, const char* dst) {
     close(src_fd);
     close(dst_fd);
     errno = errno_saved;
+    return result;
 #else
 #error Operating system not supported.
 #endif
+}
+
+int replace_with_clone(const char* src, const char* dst) {
+    char path[PATH_MAX] = { 0 };
+    if (!tmp_name(dst, path, PATH_MAX)) {
+        return errno;
+    }
+
+    errno = 0;
+    int result = genfile_clone(src, path);
 
     if (result) {
         perror("could not clonefile");
@@ -143,6 +149,7 @@ int replace_with_clone(const char* src, const char* dst) {
         return ENOENT;
     }
 
+#if defined(__APPLE__)
     // TODO: use COPYFILE_CHECK during dry-run and
     //       higher verbosity levels
     int check = copyfile(dst,
@@ -171,6 +178,9 @@ int replace_with_clone(const char* src, const char* dst) {
         unlink(path);
         return ENOENT;
     }
+#else
+#error Operating system not supported
+#endif
 
     // TODO: use COPYFILE_CHECK to verify that nothing
     //       would be copied back to the original file

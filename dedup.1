@@ -81,10 +81,30 @@ destructively replace hard links with clones. Future versions may also consider
 cloning files with multiple hard links if all links are within the space being
 evaluated and two or more hard link clusters reference duplicated data.
 .Pp
+Finally, if all matched files are transparently HFS compressed, none of the
+files will be replaced because of how HFS compressed files are stored in the
+file system. These files have no data blocks, so cloning them does not provide
+any benefit.
+.Pp
 .Nm
 will only work on volumes that have the
 .Ar VOL_CAP_INT_CLONE
 capability. Currently that is limited to APFS.
+.Pp
+While
+.Nm
+is primarily intended to be used to save storage by using clones, but provides
+.Fl l
+and
+.Fl s
+flags to replace duplicates with hard links or symbolic links respectively. Care
+should be taken when using these options, however. Unlike clones, the replaced
+files share the metadata of one of the matched files, though it might not seem
+deterministic which one. If these options are used with automation where all
+files have default ownership and permissions, there should be little issue. The
+created files are also not copy-on-write and will share any modifications made.
+These options should only be used if the consequences of each choice are
+understood.
 .Sh OPTIONS
 The following options are available:
 .Bl -tag -width indent
@@ -97,6 +117,12 @@ Display sizes using SI suffixes with 2-4 digits of precision.
 .It Fl n , Fl Fl dry-run
 Evaluate all files and find all duplicates but only print what would be done
 and do not modify any files.
+.It Fl l , Fl Fl link
+Replace duplicate files with hard links instead of clones. Replaced files will
+not retain their metadata.
+.It Fl s , Fl Fl symlink
+Replace duplicate files with symbolic links instead of clones. Replaced files
+will not retain their metadata.
 .It Fl P , Fl Fl no-progress
 Do not display a progress bar.
 .It Fl t Ar threads
@@ -152,9 +178,17 @@ Limit execution to a single thread, disable progress, and display human readable
 output while deduplicating files in `~/Downloads` and `/tmp`
 .Pp
 .Dl $ dedup -t1 -Ph ~/Downloads /tmp
+.Pp
+When creating archive files that support hard links it may be beneficial to use the
+.Fl l
+option to reduce the archive size.
+.Pp
+.Dl $ dedup -l build
 .Sh SEE ALSO
 .Xr clonefile 2 ,
-.Xr copyfile 3
+.Xr copyfile 3 ,
+.Xr link 2 ,
+.Xr symlink 2
 .Sh STANDARDS
 Sometimes.
 .\" .Sh HISTORY
