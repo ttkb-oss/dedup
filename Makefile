@@ -107,6 +107,7 @@ clean-coverage:
 
 clean: clean-coverage
 	rm -f *.o
+	rm -rf *.dSYM/
 	rm -f *.tidy
 	rm -f dedup dedup.arm dedup.x86_64 dedup.universal
 	cd test && make clean
