@@ -47,6 +47,7 @@ static char sccsid[] = "@(#)dedup.c)";
 #include <sys/sysctl.h>
 
 #include <assert.h>
+#include <err.h>
 #include <fts.h>
 #include <getopt.h>
 #include <pthread.h>
@@ -87,6 +88,7 @@ typedef struct DedupContext {
     uint8_t thread_count;
     bool dry_run;
     uint8_t verbosity;
+    bool force;
     ReplaceMode replace_mode;
     pthread_mutex_t metrics_mutex;
     pthread_mutex_t progress_mutex;
@@ -291,14 +293,15 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
             continue;
         }
 
-        if (fm->nlink > 1) {
+        if (!ctx->force && fm->nlink > 1) {
             printf("\tskipping %s, hardlinked\n",
                    fm->path);
             ctx->already_saved += fm->size;
             continue;
         }
 
-        if (fm->clone_id == origin->clone_id) {
+        if ((ctx->replace_mode == DEDUP_CLONE && fm->clone_id == origin->clone_id) ||
+            (ctx->replace_mode == DEDUP_LINK && fm->inode == origin->inode)) {
             printf("\tskipping %s, already cloned\n",
                    fm->path);
             ctx->already_saved += fm->size;
@@ -327,12 +330,15 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
                                         fm->path);
             break;
         case DEDUP_LINK:
-            result = link(origin->path, fm->path);
+            result = replace_with_link(origin->path,
+                                       fm->path);
             break;
         case DEDUP_SYMLINK:
-            result = symlink(origin->path, fm->path);
+            result = replace_with_symlink(origin->path,
+                                          fm->path);
             break;
         }
+
         if (result) {
             perror("clone failed");
             fprintf(stderr,
@@ -344,7 +350,7 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
         printf("\tcloned to %s\n",
                fm->path);
 
-        if (origin_clone_id != get_clone_id(fm->path)) {
+        if (ctx->replace_mode == DEDUP_CLONE && origin_clone_id != get_clone_id(fm->path)) {
             if (private_size(fm->path) == 0) {
                 fprintf(stderr,
                         "\t\tclonefile(2) did not clone %s as expected, but it is a clone\n",
@@ -366,7 +372,7 @@ size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
 }
 
 __attribute__((noreturn))
-void usage(char* pgm, DedupContext* ctx) {
+static void usage(char* pgm, DedupContext* ctx) {
     fprintf(stderr,
             "%s\nusage: %s [-I pattern] [-t n] [-PVcnvx] [-d n] [file ...]\n\n"
                 "Options:\n"
@@ -386,6 +392,7 @@ void usage(char* pgm, DedupContext* ctx) {
                 "                           lookup tables and replacing clones. Default: %d\n"
                 "  --verbose, -v            Increase verbosity. May be used multiple times.\n"
                 "  --version, -V            Print the version and exit\n"
+                // "  --force, -f              Don't preserve existing hardlinks.\n"
                 "  -h                       Human readable output.\n"
                 "  --help                   Show this help.\n",
             version,
@@ -499,6 +506,7 @@ int main(int argc, char* argv[]) {
         .done = 0,
         .dry_run = false,
         .verbosity = 0,
+        .force = 0,
         .replace_mode = DEDUP_CLONE,
         .thread_count = cpu_count(),
         .metrics_mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -521,6 +529,7 @@ int main(int argc, char* argv[]) {
         { "threads",         required_argument, NULL, 't' },
         { "verbose",         no_argument,       NULL, 'v' },
         { "one-file-system", no_argument,       NULL, 'x' },
+        // { "force",           no_argument,       NULL, 'f' },
         { "help",            no_argument,       NULL, '?' },
         { NULL, 0, NULL, 0 },
     };
@@ -529,7 +538,7 @@ int main(int argc, char* argv[]) {
 
     int ch = -1, t;
     short d;
-    while ((ch = getopt_long(argc, argv, "I:PVc::d:hlnt:vx", options, NULL)) != -1) {
+    while ((ch = getopt_long(argc, argv, "I:PVc::d:fhlnst:vx?", options, NULL)) != -1) {
         switch (ch) {
             case 'I':
                 fprintf(stderr, "-I is unimplemented\n");
@@ -628,9 +637,8 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < dc.thread_count; i++) {
         int r = pthread_create(&threads[i], NULL, dedup_work, &dc);
         if (r) {
-            fprintf(stderr,
-                    "Could not create threads: error %i\nRunning single threaded.\n",
-                    r);
+            warn("Could not create threads: error %i\nRunning single threaded.",
+                 r);
             dc.thread_count = i;
             break;
         }
@@ -644,11 +652,10 @@ int main(int argc, char* argv[]) {
             char* e = strerror(entry->fts_errno);
             PROGRESS_LOCK(dc.progress, &dc.progress_mutex, {
                 clear_progress();
-                fprintf(stderr,
-                        "%s: error (%d): %s\n",
-                        entry->fts_path,
-                        entry->fts_errno,
-                        e);
+                warnx("%s: error (%d): %s",
+                      entry->fts_path,
+                      entry->fts_errno,
+                      e);
                 display_progress(dc.progress);
             });
             continue;
@@ -659,12 +666,13 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if (current_dev != entry->fts_statp->st_dev) {
-            clonefile_supported = is_clonefile_supported(entry->fts_path);
+        if (dc.replace_mode == DEDUP_CLONE &&
+            current_dev != entry->fts_statp->st_dev) {
             current_dev = entry->fts_statp->st_dev;
+            clonefile_supported = is_clonefile_supported(entry->fts_path);
 
             if (!clonefile_supported) {
-                fprintf(stderr, "Skipping %s: cloning not supported\n", entry->fts_path);
+                warnx("Skipping %s: cloning not supported", entry->fts_path);
 
                 // if FTS_XDEV is set, we can't accidentally cross into a
                 // volume that does support clonefile, so skip everything else
@@ -675,7 +683,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (!clonefile_supported) {
+        if (dc.replace_mode == DEDUP_CLONE &&
+            !clonefile_supported) {
             continue;
         }
 

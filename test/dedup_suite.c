@@ -33,57 +33,17 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-uint64_t get_clone_id(const char* restrict path) {
-
-#define ATTR_BITMAP_COUNT 5
-
-    struct attrlist attrList = {
-        .bitmapcount = ATTR_BITMAP_COUNT,
-        .forkattr = ATTR_CMNEXT_CLONEID,
-    };
-
-    struct UInt64Ref {
-        uint32_t length;
-        uint64_t value;
-    } __attribute((aligned(4), packed));
-    struct UInt64Ref clone_id = { 0 };
-
-    int err = getattrlist(path,
-                          &attrList,
-                          &clone_id,
-                          sizeof(struct UInt64Ref),
-                          FSOPT_ATTR_CMN_EXTENDED);
-    if (err) {
-        perror("could not getattrlist");
-        return -1;
-    }
-
-    return clone_id.value;
-}
-
-__attribute__((const))
-char* run(const char* restrict command) {
-    char* output = calloc(2048, 1);
-    FILE* pout = popen(command, "r");
-    size_t offset = 0;
-    size_t read = 0;
-    while (offset < 2048 && (read = fread(output + offset, 1, 2048 - offset, pout)) > 0) {
-        offset += read;
-    }
-    int r = pclose(pout);
-    ck_assert_int_eq(1, WIFEXITED(r));
-    ck_assert_int_eq(0, WEXITSTATUS(r));
-    return output;
-}
+#include "../utils.h"
+#include "test_utils.h"
 
 START_TEST(dedup_empty) {
-    char* output = run("../dedup test-data/empty");
+    char* output = run("../dedup test-data/clonefile/empty");
     ck_assert_str_eq("duplicates found: 0\nbytes saved: 0\nalready saved: 0\n", output);
     free(output);
 
     struct stat e1 = { 0 }, e2 = { 0 };
-    stat("test-data/empty/empty", &e1);
-    stat("test-data/empty/empty2", &e2);
+    stat("test-data/clonefile/empty/empty", &e1);
+    stat("test-data/clonefile/empty/empty2", &e2);
 
     ck_assert_int_ne(e1.st_ino, e2.st_ino);
     ck_assert_int_eq(e1.st_dev, e2.st_dev);
@@ -92,17 +52,17 @@ START_TEST(dedup_empty) {
 } END_TEST
 
 void check_bars() {
-    uint64_t bcid = get_clone_id("test-data/bars/bar");
+    uint64_t bcid = get_clone_id("test-data/clonefile/bars/bar");
 
-    char* output = run("../dedup test-data/bars");
+    char* output = run("../dedup test-data/clonefile/bars");
     free(output);
 
     struct stat b1, b2, b3, b4, b5;
-    stat("test-data/bars/bar", &b1);
-    stat("test-data/bars/bar2", &b2);
-    stat("test-data/bars/bar3", &b3);
-    stat("test-data/bars/bar4", &b4);
-    stat("test-data/bars/bar5", &b5);
+    stat("test-data/clonefile/bars/bar", &b1);
+    stat("test-data/clonefile/bars/bar2", &b2);
+    stat("test-data/clonefile/bars/bar3", &b3);
+    stat("test-data/clonefile/bars/bar4", &b4);
+    stat("test-data/clonefile/bars/bar5", &b5);
 
     ck_assert_int_ne(b1.st_ino, b2.st_ino);
     ck_assert_int_eq(b1.st_ino, b3.st_ino);
@@ -110,11 +70,11 @@ void check_bars() {
     ck_assert_int_ne(b1.st_ino, b2.st_ino);
     ck_assert_int_ne(b1.st_ino, b2.st_ino);
 
-    uint64_t bcid1 = get_clone_id("test-data/bars/bar"),
-             bcid2 = get_clone_id("test-data/bars/bar2"),
-             bcid3 = get_clone_id("test-data/bars/bar3"),
-             bcid4 = get_clone_id("test-data/bars/bar4"),
-             bcid5 = get_clone_id("test-data/bars/bar5");
+    uint64_t bcid1 = get_clone_id("test-data/clonefile/bars/bar"),
+             bcid2 = get_clone_id("test-data/clonefile/bars/bar2"),
+             bcid3 = get_clone_id("test-data/clonefile/bars/bar3"),
+             bcid4 = get_clone_id("test-data/clonefile/bars/bar4"),
+             bcid5 = get_clone_id("test-data/clonefile/bars/bar5");
     ck_assert_uint_eq(bcid, bcid1); // the clone origin should be "bar"
     ck_assert_uint_eq(bcid, bcid2);
     ck_assert_uint_eq(bcid, bcid3);
@@ -128,58 +88,58 @@ START_TEST(dedup_hardlinks) {
 } END_TEST
 
 START_TEST(dedup_devices) {
-    int r = system("../dedup test-data/devices");
+    int r = system("../dedup test-data/clonefile/devices");
     ck_assert_int_eq(0, r);
 
     struct stat f, e;
-    stat("test-data/devices/fifo", &f);
-    stat("test-data/devices/empty", &e);
+    stat("test-data/clonefile/devices/fifo", &f);
+    stat("test-data/clonefile/devices/empty", &e);
 
-    ck_assert_uint_ne(get_clone_id("test-data/devices/fifo"),
-                      get_clone_id("test-data/devices/empty"));
+    ck_assert_uint_ne(get_clone_id("test-data/clonefile/devices/fifo"),
+                      get_clone_id("test-data/clonefile/devices/empty"));
 } END_TEST
 
 START_TEST(dedup_big) {
-    int r = system("../dedup test-data/big");
+    int r = system("../dedup test-data/clonefile/big");
     ck_assert_int_eq(0, r);
 
     struct stat f, e;
-    stat("test-data/big/big", &f);
-    stat("test-data/big/big2", &e);
+    stat("test-data/clonefile/big/big", &f);
+    stat("test-data/clonefile/big/big2", &e);
 
-    ck_assert_uint_ne(get_clone_id("test-data/big/big"),
-                      get_clone_id("test-data/big/big2"));
+    ck_assert_uint_ne(get_clone_id("test-data/clonefile/big/big"),
+                      get_clone_id("test-data/clonefile/big/big2"));
 } END_TEST
 
 START_TEST(dedup_same_size) {
-    int r = system("../dedup -t0 test-data/same-size");
+    int r = system("../dedup -t0 test-data/clonefile/same-size");
     ck_assert_int_eq(0, r);
 
-    ck_assert_uint_eq(get_clone_id("test-data/same-size/big"),
-                      get_clone_id("test-data/same-size/big2"));
+    ck_assert_uint_eq(get_clone_id("test-data/clonefile/same-size/big"),
+                      get_clone_id("test-data/clonefile/same-size/big2"));
 } END_TEST
 
 START_TEST(dedup_same_first_last) {
-    int r = system("../dedup test-data/same-first-last");
+    int r = system("../dedup test-data/clonefile/same-first-last");
     ck_assert_int_eq(0, r);
 
-    ck_assert_uint_ne(get_clone_id("test-data/same-first-last/same-1"),
-                      get_clone_id("test-data/same-first-last/same-2"));
+    ck_assert_uint_ne(get_clone_id("test-data/clonefile/same-first-last/same-1"),
+                      get_clone_id("test-data/clonefile/same-first-last/same-2"));
 } END_TEST
 
 START_TEST(dedup_flags_acls) {
-    int r = system("../dedup test-data/flags-acls");
+    int r = system("../dedup test-data/clonefile/flags-acls");
     ck_assert_int_eq(0, r);
 
     struct stat b1, b3;
-    stat("test-data/flags-acls/bar", &b1);
-    stat("test-data/flags-acls/bar3", &b3);
+    stat("test-data/clonefile/flags-acls/bar", &b1);
+    stat("test-data/clonefile/flags-acls/bar3", &b3);
 
     ck_assert_int_eq(0642 | S_IFREG, b3.st_mode);
-    ck_assert_uint_eq(get_clone_id("test-data/flags-acls/bar"),
-                      get_clone_id("test-data/flags-acls/bar3"));
+    ck_assert_uint_eq(get_clone_id("test-data/clonefile/flags-acls/bar"),
+                      get_clone_id("test-data/clonefile/flags-acls/bar3"));
 
-    acl_t acl = acl_get_file("test-data/flags-acls/bar3", ACL_TYPE_EXTENDED);
+    acl_t acl = acl_get_file("test-data/clonefile/flags-acls/bar3", ACL_TYPE_EXTENDED);
     ck_assert_ptr_nonnull(acl);
     acl_entry_t entry;
     acl_get_entry(acl, ACL_FIRST_ENTRY, &entry);
@@ -194,8 +154,8 @@ START_TEST(dedup_flags_acls) {
 } END_TEST
 
 START_TEST(dedup_hfs) {
-    char* output = run("../dedup -Phx /Volumes/dedup-test-hfs 2>&1");
-    ck_assert_str_eq("Skipping /Volumes/dedup-test-hfs: cloning not supported\nduplicates found: 0\nbytes saved: 0 bytes\nalready saved: 0 bytes\n", output);
+    char* output = run("../dedup -Phx /Volumes/dedup-test-hfs-clonefile 2>&1");
+    ck_assert_str_eq("dedup: Skipping /Volumes/dedup-test-hfs-clonefile: cloning not supported\nduplicates found: 0\nbytes saved: 0 bytes\nalready saved: 0 bytes\n", output);
     free(output);
 } END_TEST
 
@@ -205,7 +165,7 @@ START_TEST(dedup_does_not_exist) {
 } END_TEST
 
 START_TEST(dedup_negative_threads) {
-    int r = system("../dedup -t -1 test-data/bars");
+    int r = system("../dedup -t -1 test-data/clonefile/bars");
     ck_assert_int_eq(1, WEXITSTATUS(r));
 } END_TEST
 
@@ -215,7 +175,7 @@ START_TEST(dedup_help) {
 } END_TEST
 
 START_TEST(dedup_dry_run) {
-    int r = system("../dedup -nP /Volumes/dedup-test-hfs test-data/bars");
+    int r = system("../dedup -nP /Volumes/dedup-test-hfs-clonefile test-data/clonefile/bars");
     ck_assert_int_eq(0, WEXITSTATUS(r));
 } END_TEST
 

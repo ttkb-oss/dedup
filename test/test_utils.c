@@ -24,36 +24,23 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause
 
-#ifndef __DEDUP_CLONE_H__
-#define __DEDUP_CLONE_H__
+#include <check.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-/// replace_with_clone
-///
-/// The `replace_with_clone` function causes the link named `dst` to be
-/// replaced with a clone of `src`. Unlike `clonefile(2)`, it is expected
-/// that `dst` already exists. All metadata (mode, flags, & ACLs)
-/// are retained on `dst`. The current user must have read access to both
-/// `src` and `dst` and write access to `dst` and the directory where
-/// `dst` resides.
-///
-/// `src` and `dst` must be on the same volume. (TODO: is it enough
-/// that they are with in the same APFS partition, can clones span
-/// volume boundaries?).
-///
-/// On success `dst` will have its data replaced with copy-on-write,
-/// cloned blocks from `src` and `replace_with_clone` returns 0.
-///
-/// On failure clonefile will return one of the following values:
-///
-///   [ENOMEM]     the name of the temporary file is longer than `PATH_MAX`
-///
-///   In addition, `replace_with_clone` may return any error
-///   returned by `clonefile(2)`, `copyfile(2)`, or `rename(2)`.
-///
-/// See also: `clonefile(2)`, `copyfile(2)`, or `rename(2)`
-int replace_with_clone(const char* src, const char* dst);
+#include "test_utils.h"
 
-int replace_with_link(const char* src, const char* dst);
-int replace_with_symlink(const char* src, const char* dst);
+char* run(const char* restrict command) {
+    char* output = calloc(2048, 1);
+    FILE* pout = popen(command, "r");
+    size_t offset = 0;
+    size_t read = 0;
+    while (offset < 2048 && (read = fread(output + offset, 1, 2048 - offset, pout)) > 0) {
+        offset += read;
+    }
+    int r = pclose(pout);
+    ck_assert_int_eq(1, WIFEXITED(r));
+    ck_assert_int_eq(0, WEXITSTATUS(r));
+    return output;
+}
 
-#endif // __DEDUP_CLONE_H__

@@ -34,11 +34,13 @@
 #include <sys/ioctl.h>
 #endif
 
+#include <err.h>
 #include <errno.h>
 #include <libgen.h>
 #include <stdio.h>
-#include <unistd.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "clone.h"
 
@@ -193,4 +195,98 @@ int replace_with_clone(const char* src, const char* dst) {
     }
 
     return 0;
+}
+
+
+int replace_with_link(const char* src, const char* dst) {
+    // TODO: should this atomically move a tmp file instead of
+    //       two step an unlink and link?
+    if (unlink(dst)) {
+        warn("%s", dst);
+        return 1;
+    }
+
+    return link(src, dst);
+}
+
+// returns a relative path to dst from src
+char* path_relative_to(const char* src, const char* dst) {
+    char* real_src = realpath(src, NULL),
+        * real_dst = realpath(dst, NULL),
+        * orig_real_src = real_src,
+        * orig_real_dst = real_dst;
+
+    // consume root /
+    real_src++;
+    real_dst++;
+
+    int depth = 0;
+
+    // consume common directories
+    do {
+        char* src_dir_end = strchr(real_src, '/');
+        char* dst_dir_end = strchr(real_dst, '/');
+
+        if (src_dir_end == NULL && dst_dir_end != NULL) {
+            // we've reached the end of the dst path, but not the end of src.
+            // (e.g. /foo/bar/baz/car vs. /foo/bar/baz)
+            break;
+        }
+
+        if (src_dir_end != NULL && dst_dir_end == NULL) {
+            // we've reached thed end of src path, but not the end of dst.
+            // (e.g. /foo/bar/baz vs. /foo/bar/baz/car). if this last entry
+            // is a file, the depth of the dst is one higher. in this case
+            // we're only dealing with files
+            break;
+        }
+
+        if (src_dir_end == NULL && dst_dir_end == NULL) {
+            break;
+        }
+
+        if ((src_dir_end - real_src) != (dst_dir_end - real_dst) ||
+            strncmp(real_src, real_dst, (src_dir_end - real_src))) {
+            break;
+        }
+
+        real_src = src_dir_end + 1;
+        real_dst = dst_dir_end + 1;
+    } while (true);
+
+    for (char* end = real_src; end != NULL && *end != '\0'; end = strchr(end, '/')) {
+        end++;
+        depth++;
+    }
+    depth--;
+
+    free(orig_real_src);
+    char* path = calloc(PATH_MAX, 1);
+    int pos = 0;
+    for (int i = 0; i < depth; i++) {
+        path[pos++] = '.';
+        path[pos++] = '.';
+        path[pos++] = '/';
+    }
+    memcpy(path + pos, real_dst, strlen(real_dst));
+    free(orig_real_dst);
+
+    return path;
+}
+
+int replace_with_symlink(const char* src, const char* dst) {
+    char* path = path_relative_to(dst, src);
+
+    // TODO: should this atomically move a tmp file instead of
+    //       two step an unlink and link?
+    if (unlink(dst)) {
+        free(path);
+        warn("%s", dst);
+        return 1;
+    }
+    int r = symlink(path, dst);
+
+    free(path);
+
+    return r;
 }

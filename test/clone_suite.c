@@ -29,6 +29,7 @@
 
 #include <check.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #include "../clone.h"
 
@@ -55,14 +56,14 @@ START_TEST(clone_bad_src) {
 } END_TEST
 
 START_TEST(clone_bad_dst) {
-    int r = replace_with_clone("test-data/clone-dst-acls/bar",
-                               "test-data/clone-dst-acls/bar3");
+    int r = replace_with_clone("test-data/clonefile/clone-dst-acls/bar",
+                               "test-data/clonefile/clone-dst-acls/bar3");
     ck_assert_int_eq(r, -1);
 } END_TEST
 
 START_TEST(clone_cannot_replace) {
-    int r = replace_with_clone("test-data/clone-dst-acls/bar",
-                               "test-data/clone-dst-acls/bar4");
+    int r = replace_with_clone("test-data/clonefile/clone-dst-acls/bar",
+                               "test-data/clonefile/clone-dst-acls/bar4");
     ck_assert_int_eq(r, 2);
 } END_TEST
 
@@ -87,6 +88,31 @@ START_TEST(clone_tmp_name) {
     // memset(path, '\0', PATH_MAX);
 } END_TEST
 
+char* path_relative_to(const char* src, const char* dst);
+
+START_TEST(clone_path_relative_to_test) {
+    char* path = path_relative_to("test-data/clonefile/clone-dst-acls/bar",
+                                  "test-data/clonefile/clone-dst-acls/bar4");
+    ck_assert_str_eq("bar4", path);
+    free(path);
+
+    path = path_relative_to("test-data/clonefile/bars/bar",
+                            "test-data/clonefile/clone-dst-acls/bar");
+    ck_assert_str_eq("../clone-dst-acls/bar", path);
+    free(path);
+
+    path = path_relative_to("../clone.c",
+                            "test-data/clonefile/bars/bar");
+    ck_assert_str_eq("test/test-data/clonefile/bars/bar", path);
+    free(path);
+
+    path = path_relative_to("test-data/clonefile/bars/bar",
+                            "../clone.c");
+    ck_assert_str_eq("../../../../clone.c", path);
+    free(path);
+
+} END_TEST
+
 Suite* clone_suite() {
     TCase* tc = tcase_create("clone");
     tcase_add_test(tc, clone_path_to_long);
@@ -94,6 +120,7 @@ Suite* clone_suite() {
     tcase_add_test(tc, clone_bad_dst);
     tcase_add_test(tc, clone_cannot_replace);
     tcase_add_test(tc, clone_tmp_name);
+    tcase_add_test(tc, clone_path_relative_to_test);
 
     Suite* s = suite_create("clone");
     suite_add_tcase(s, tc);

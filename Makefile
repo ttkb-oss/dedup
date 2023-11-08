@@ -10,7 +10,7 @@ LANG = en
 VERSION ?= 0.0.6
 
 CFLAGS += \
-	-std=gnu2x \
+    -std=gnu2x \
     -Wall -Wextra -Werror -pedantic \
     -Wpointer-arith \
     -Wno-unused-parameter \
@@ -58,11 +58,10 @@ all: dedup
 	rm -f $(basename $<).gcda $(basename $<).gcno
 	$(CC) $(CFLAGS) -v -c -o $@ $<
 
-dedup.arm: CFLAGS += -target arm64-apple-macos13
-dedup.x86_64: CFLAGS += -target x86_64-apple-macos13
+dedup.arm: CFLAGS += -target arm64-apple-macos11
+dedup.x86_64: CFLAGS += -target x86_64-apple-macos11
 
 dedup dedup.arm dedup.x86_64: $(OBJECTS)
-	rm -f dedup.gcda dedup.gcno
 	$(CC) $(CFLAGS) -o $@ $^
 	mv $@ $@.unsigned
 	codesign -s - -v -f $(ENTITLEMENT_FLAGS) $@.unsigned
@@ -85,16 +84,15 @@ universal-dedup: dedup.universal
 leaks-build: ENTITLEMENT_FLAGS = --entitlements entitlement.plist
 leaks-build: CFLAGS += \
         -DNDEBUG \
-        -ftest-coverage \
-        -fprofile-arcs \
+        --coverage \
         -g \
         -O0
 leaks-build: dedup
 	dsymutil dedup
-
 check-build: CFLAGS += \
-        -fsanitize=address \
-        -fsanitize-address-use-after-return=always
+    --coverage \
+    -fsanitize=address \
+    -fsanitize-address-use-after-return=always
 check-build: leaks-build
 check-test: check-build
 	cd test && make check
