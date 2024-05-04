@@ -688,10 +688,6 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if (entry->fts_info == FTS_DP) {
-            continue;
-        }
-
         // the file cannot be a directory
         if (entry->fts_info == FTS_D ||
             entry->fts_info == FTS_DC ||
