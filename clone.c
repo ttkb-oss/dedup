@@ -223,7 +223,7 @@ char* path_relative_to(const char* src, const char* dst) {
     int depth = 0;
 
     // consume common directories
-    do {
+    for (;;) {
         char* src_dir_end = strchr(real_src, '/');
         char* dst_dir_end = strchr(real_dst, '/');
 
@@ -252,7 +252,7 @@ char* path_relative_to(const char* src, const char* dst) {
 
         real_src = src_dir_end + 1;
         real_dst = dst_dir_end + 1;
-    } while (true);
+    }
 
     for (char* end = real_src; end != NULL && *end != '\0'; end = strchr(end, '/')) {
         end++;
