@@ -14,7 +14,7 @@ A macOS utility to replace duplicate file data with a copy-on-write clone.
 Duplicates are replaced with a clone of another (using [`clonefile(2)`](https://www.unix.com/man-page/mojave/2/clonefile/)).
 If no *file* is specified, the current directory is used.
 
-Cloned file share data blocks with the file they were cloned from, saving space
+Cloned files share data blocks with the file they were cloned from, saving space
 on disk. Unlike a hardlinked file, any future modification to either the clone
 or the original file will be remain private to that file (copy-on-write).
 
@@ -56,7 +56,7 @@ as a clone source.
 capability. Currently that is limited to APFS.
 
 While **dedup** is primarily intended to be used to save storage by using
-clones, but provides **-l** and **-s** flags to replace duplicates with hard
+clones, it also provides **-l** and **-s** flags to replace duplicates with hard
 links or symbolic links respectively. Care should be taken when using these
 options, however. Unlike clones, the replaced files share the metadata of one
 of the matched files, though it might not seem deterministic which one. If these
@@ -125,7 +125,7 @@ The following options are available:
 
 # EXIT STATUS
 
-The **dedup** utility exits 0 and &gt;0 if an error occurs.
+The **dedup** utility exits 0 on success and &gt;0 if an error occurs.
 
 It is possible that during abnormal termination a temporary clone will be left
 before it is moved to the path it is replacing. In such cases a file with the
@@ -139,7 +139,7 @@ in the same directory as target file.
 # EXAMPLES
 
 Find all duplicates and display which files would be replaced by clones along
-with the estimated space that would be saved.
+with the estimated space that would be saved:
 
 	$ dedup -n
 
@@ -186,7 +186,7 @@ may be changed, causing *b* to be cloned to its new content. Likewise, file *b*
 may be changed and then overwritten by a clone with it's previous content.
 
 It may be reasonable for future versions to include additional checks and locks
-to ensure modifications are detected prior to clone replacement.
+to ensure modifications are detected prior to clone replacement (#5).
 
 # HISTORY
 
@@ -301,7 +301,7 @@ output the amount of space that is already saved by clones and hard links.
 
 A [patched version of du(1)](https://github.com/hohle/file_cmds/commit/6fd06e315b6213aa55516f5507cf60a869c0d599)
 will also ignore clones it encounters multiple times just like hard links
-to the same inode are ignored. The the patched `du` will display smaller
+to the same inode are ignored. The patched `du` will display smaller
 block usage if data can be deduplicated.
 
 If you want to ensure a directory contains the same content before and after
@@ -326,8 +326,8 @@ may make FreeBSD support possible in the future.
 
 ## Why Aren't HFS Compressed Files Cloned?
 
-APFS supports HFS compression just as any file system with xattrs and support
-for flags would. Howver, HFS compression does not store data in a file's data
+APFS supports HFS compression using xattrs and flags, just like HFS+. Howver,
+HFS compression does not store data in a file's data
 fork, but in a file's xattrs. Since APFS clones data blocks, not file metadata,
 there's nothing to share between clones of HFS compressed files.
 
@@ -335,3 +335,6 @@ HFS transparent compression uses a file's resource fork (the
 `com.apple.ResourceFork` xattr) along with a `com.apple.decmps` xattr
 describing compression details (algorithm, original file size), and the
 `UF_COMPRESSED` flag. There is no data in any data blocks (né data fork).
+
+**UPDATE** In macOS 15 Sequoia, HFS Compressed files now appear to be
+transparently handled and no longer expose `UF_COMPRESSED`.

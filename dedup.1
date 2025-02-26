@@ -43,7 +43,7 @@ argument(s). Duplicates are replaced with a clone of another (using
 .Ar
 is specified, the current directory is used.
 .Pp
-Cloned file share data blocks with the file they were cloned from, saving space
+Cloned files share data blocks with the file they were cloned from, saving space
 on disk. Unlike a hard linked file, any future modification to either the clone
 or the original file will be remain private to that file (copy-on-write).
 .Pp
@@ -93,7 +93,8 @@ capability. Currently that is limited to APFS.
 .Pp
 While
 .Nm
-is primarily intended to be used to save storage by using clones, but provides
+is primarily intended to be used to save storage by using clones, it also
+provides
 .Fl l
 and
 .Fl s
@@ -157,7 +158,7 @@ Print a summary of options and exit.
 .Sh EXIT STATUS
 The
 .Nm
-utility exits 0 and >0 if an error occurs.
+utility exits 0 on success and >0 if an error occurs.
 .Pp
 It is possible that during abnormal termination a temporary clone will be left
 before it is moved to the path it is replacing. In such cases a file with the
@@ -170,7 +171,7 @@ can be used to find these temporary files if necessary.
 .Dl $ find . -name '.~.*'
 .Sh EXAMPLES
 Find all duplicates and display which files would be replaced by clones along
-with the estimated space that would be saved.
+with the estimated space that would be saved:
 .Pp
 .Dl $ dedup -n
 .Pp
