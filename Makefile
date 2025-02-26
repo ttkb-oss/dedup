@@ -31,6 +31,16 @@ CFLAGS += \
     '-DVERSION="$(VERSION)"' \
     '-DBUILD_DATE="$(shell date '+%Y%m%d')"'
 
+ifdef USE_LIBDISPATCH
+CFLAGS += \
+    -DUSE_LIBDISPATCH
+endif
+
+ifdef USE_ATOMICS
+CFLAGS += \
+    -DUSE_ATOMICS
+endif
+
 ENTITLEMENT_FLAGS =
 
 OBJECTS = \

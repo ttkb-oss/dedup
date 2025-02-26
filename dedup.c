@@ -62,13 +62,39 @@ static char sccsid[] = "@(#)dedup.c)";
 #include "queue.h"
 #include "utils.h"
 
-#define PROGRESS_LOCK(p, m, block) do { \
+#ifdef USE_LIBDISPATCH
+
+#include <dispatch/dispatch.h>
+
+#define PROGRESS_LOCK(p, m, block) \
+    do { \
         if ((p)) { \
-            pthread_mutex_lock((m)); \
-            block; \
-            pthread_mutex_unlock((m)); \
+            dispatch_sync((m), ^{ block }); \
         } \
     } while (0)
+
+#define SYNC(m, block) \
+	dispatch_sync(m, ^{ block })
+
+#else
+
+#define PROGRESS_LOCK(p, m, block) \
+    do { \
+        if ((p)) { \
+            pthread_mutex_lock(&(m)); \
+            block; \
+            pthread_mutex_unlock(&(m)); \
+        } \
+    } while (0)
+
+#define SYNC(m, block) \
+    do { \
+        pthread_mutex_lock(&(m)); \
+        block; \
+        pthread_mutex_unlock(&(m)); \
+    } while (0)
+
+#endif
 
 typedef enum ReplaceMode {
     DEDUP_CLONE    = 0,
@@ -91,11 +117,19 @@ typedef struct DedupContext {
     bool force;
     ReplaceMode replace_mode;
     pthread_mutex_t metrics_mutex;
+#ifdef USE_LIBDISPATCH
+    dispatch_queue_t progress_mutex;
+    dispatch_queue_t queue_mutex;
+    dispatch_queue_t visited_mutex;
+    dispatch_queue_t duplicates_mutex;
+    dispatch_queue_t done_mutex;
+#else
     pthread_mutex_t progress_mutex;
     pthread_mutex_t queue_mutex;
     pthread_mutex_t visited_mutex;
     pthread_mutex_t duplicates_mutex;
     pthread_mutex_t done_mutex;
+#endif
 } DedupContext;
 
 
@@ -104,7 +138,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
     FileMetadata* fm = metadata_from_entry(fe);
 
     if (!fm) {
-        PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
+        PROGRESS_LOCK(ctx->progress, ctx->progress_mutex, {
             clear_progress();
             fprintf(stderr,
                     "could not populate metadata for %s\n",
@@ -114,41 +148,43 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
         return;
     }
 
-    pthread_mutex_lock(&ctx->visited_mutex);
-    FileMetadata* old = visited_tree_insert(ctx->visited, fm);
-    old = metadata_dup(old);
-    pthread_mutex_unlock(&ctx->visited_mutex);
+    __block FileMetadata* old;
+    SYNC(ctx->visited_mutex, {
+        old = visited_tree_insert(ctx->visited, fm);
+        old = metadata_dup(old);
+    });
 
     if (old) {
-        pthread_mutex_lock(&ctx->duplicates_mutex);
-        AList* list = duplicate_tree_find(ctx->duplicates, fm);
-        if (alist_empty(list)) {
-            alist_add(list, metadata_dup(old));
-        }
+        __block AList* list;
+        SYNC(ctx->duplicates_mutex, {
+            list = duplicate_tree_find(ctx->duplicates, fm);
+            if (alist_empty(list)) {
+                alist_add(list, metadata_dup(old));
+            }
 
-        if (ctx->verbosity) {
-            PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
-                clear_progress();
-                printf("%s has %zu duplicates\n",
-                       fm->path,
-                       alist_size(list));
-                for (size_t i = 0; i < alist_size(list); i++) {
-                    printf("\t%s\n",
-                           ((FileMetadata*) alist_get(list, i))->path);
-                }
-            });
-        }
+            if (ctx->verbosity) {
+                PROGRESS_LOCK(ctx->progress, ctx->progress_mutex, {
+                    clear_progress();
+                    printf("%s has %zu duplicates\n",
+                           fm->path,
+                           alist_size(list));
+                    for (size_t i = 0; i < alist_size(list); i++) {
+                        printf("\t%s\n",
+                               ((FileMetadata*) alist_get(list, i))->path);
+                    }
+                });
+            }
 
-        // ownership transferred to the list
-        alist_add(list, fm);
-        pthread_mutex_unlock(&ctx->duplicates_mutex);
+            // ownership transferred to the list
+            alist_add(list, fm);
+        });
 
         if (fm->clone_id != old->clone_id) {
             pthread_mutex_lock(&ctx->metrics_mutex);
             ctx->found++;
             pthread_mutex_unlock(&ctx->metrics_mutex);
             if (ctx->verbosity > 1) {
-                PROGRESS_LOCK(ctx->progress, &ctx->progress_mutex, {
+                PROGRESS_LOCK(ctx->progress, ctx->progress_mutex, {
                     clear_progress();
                     printf("'%s' is duplicated by '%s' (%zu bytes) [found: %zu]\n",
                            old->path,
@@ -166,20 +202,23 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
 
 void* dedup_work(void* ctx) {
     DedupContext* c = ctx;
-    uint8_t done = c->done;
+    __block uint8_t done = c->done;
 
     while (!done) {
-        pthread_mutex_lock(&c->queue_mutex);
-        FileEntry* fe = file_entry_next(c->queue);
-        pthread_mutex_unlock(&c->queue_mutex);
+        __block FileEntry* fe;
+        SYNC(c->queue_mutex, {
+            fe = file_entry_next(c->queue);
+        });
 
         if (!fe) {
-            pthread_mutex_lock(&c->done_mutex);
-            done = c->done;
-            pthread_mutex_unlock(&c->done_mutex);
+            SYNC(c->done_mutex, {
+                done = c->done;
+            });
+
             if (done) {
                 break;
             }
+
             usleep(100);
             continue;
         }
@@ -187,7 +226,7 @@ void* dedup_work(void* ctx) {
         visit_entry(fe, c->progress, c);
         file_entry_free(fe);
 
-        PROGRESS_LOCK(c->progress, &c->progress_mutex, {
+        PROGRESS_LOCK(c->progress, c->progress_mutex, {
             c->progress->completedUnitCount++;
             display_progress(c->progress);
         });
@@ -203,6 +242,7 @@ void* dedup_work(void* ctx) {
 size_t deduplicate(AList* metadata_set, DedupContext* ctx) {
     FileMetadata* origin = NULL;
     char* reason = NULL;
+
     // if there is a file with more than one hard link, use that as the
     // source candidate (optimally a hardlink with the most links)
     for (size_t i = 0; i < alist_size(metadata_set); i++) {
@@ -495,7 +535,7 @@ int main(int argc, char* argv[]) {
     uint16_t max_depth = UINT16_MAX;
     int user_fts_options = 0;
 
-    DedupContext dc = {
+    __block DedupContext dc = {
         .progress = &p,
         .queue = queue,
         .visited = new_visited_tree(),
@@ -510,11 +550,19 @@ int main(int argc, char* argv[]) {
         .replace_mode = DEDUP_CLONE,
         .thread_count = cpu_count(),
         .metrics_mutex = PTHREAD_MUTEX_INITIALIZER,
+#ifdef USE_LIBDISPATCH
+        .progress_mutex = dispatch_queue_create("progress", DISPATCH_QUEUE_SERIAL),
+        .queue_mutex = dispatch_queue_create("queue", DISPATCH_QUEUE_SERIAL),
+        .visited_mutex = dispatch_queue_create("visited", DISPATCH_QUEUE_SERIAL),
+        .duplicates_mutex = dispatch_queue_create("duplicates", DISPATCH_QUEUE_SERIAL),
+        .done_mutex = dispatch_queue_create("done", DISPATCH_QUEUE_SERIAL),
+#else
         .progress_mutex = PTHREAD_MUTEX_INITIALIZER,
         .queue_mutex = PTHREAD_MUTEX_INITIALIZER,
         .visited_mutex = PTHREAD_MUTEX_INITIALIZER,
         .duplicates_mutex = PTHREAD_MUTEX_INITIALIZER,
         .done_mutex = PTHREAD_MUTEX_INITIALIZER,
+#endif
     };
 
     static const struct option options[] = {
@@ -650,7 +698,7 @@ int main(int argc, char* argv[]) {
     while ((entry = fts_read(traversal)) != NULL) {
         if (entry->fts_errno) {
             char* e = strerror(entry->fts_errno);
-            PROGRESS_LOCK(dc.progress, &dc.progress_mutex, {
+            PROGRESS_LOCK(dc.progress, dc.progress_mutex, {
                 clear_progress();
                 warnx("%s: error (%d): %s",
                       entry->fts_path,
@@ -718,21 +766,21 @@ int main(int argc, char* argv[]) {
 
         // at this point we have a regular file
         // that only has one link
-        PROGRESS_LOCK(dc.progress, &dc.progress_mutex, {
+        PROGRESS_LOCK(dc.progress, dc.progress_mutex, {
             dc.progress->totalUnitCount++;
             display_progress(dc.progress);
         });
 
-        pthread_mutex_lock(&dc.queue_mutex);
-        file_entry_queue_append(queue,
-                                entry->fts_path,
-                                entry->fts_statp->st_dev,
-                                entry->fts_statp->st_ino,
-                                entry->fts_statp->st_nlink,
-                                entry->fts_statp->st_flags,
-                                entry->fts_statp->st_size,
-                                entry->fts_level);
-        pthread_mutex_unlock(&dc.queue_mutex);
+        SYNC(dc.queue_mutex, {
+            file_entry_queue_append(queue,
+                                    entry->fts_path,
+                                    entry->fts_statp->st_dev,
+                                    entry->fts_statp->st_ino,
+                                    entry->fts_statp->st_nlink,
+                                    entry->fts_statp->st_flags,
+                                    entry->fts_statp->st_size,
+                                    entry->fts_level);
+        });
 
         if (dc.thread_count == 0) {
             dedup_work(&dc);
@@ -741,9 +789,9 @@ int main(int argc, char* argv[]) {
 
     fts_close(traversal);
 
-    pthread_mutex_lock(&dc.done_mutex);
-    dc.done = 1;
-    pthread_mutex_unlock(&dc.done_mutex);
+    SYNC(dc.done_mutex, {
+        dc.done = 1;
+    });
 
     for (int i = 0; i < dc.thread_count; i++) {
         // clang-analyzer thinks threads[i] can be NULL, but `pthread_t`
