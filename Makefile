@@ -50,7 +50,7 @@ OBJECTS = \
     clean-coverage report-coverage \
     universal-dedup universal-dist \
 	compiledb tidy \
-    list
+    list mkdirs
 
 all: dedup
 
@@ -118,11 +118,11 @@ report-coverage:
 
 PREFIX ?= /usr/local
 
-install: dedup
+install: dedup mkdirs
 	install dedup $(PREFIX)/bin
 	install dedup.1 $(PREFIX)/share/man/man1
 
-build/dist:
+build/dist mkdirs:
 	mkdir -p $(PREFIX)/bin
 	mkdir -p $(PREFIX)/share/man/man1
 
