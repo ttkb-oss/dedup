@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches-ignore: [ "master" ]
+  pull_request_target:
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        version: [15, 14, 13]
+    runs-on: macOS-${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install MacPorts
+        run: |
+           MATRIX_VERSION="${{ matrix.version }}"
+           OS_NAME="$([[ ${{ matrix.version }} -eq 15 ]] && echo "Sequoia" || ( [[ ${{ matrix.version }} -eq 14 ]] && echo "Sonoma" || echo "Ventura" ) )"
+           MACPORTS_VERSION=2.10.5
+           MACPORTS_PKG_NAME="MacPorts-${MACPORTS_VERSION}-${MATRIX_VERSION}-${OS_NAME}.pkg"
+           MACPORTS_URL="https://github.com/macports/macports-base/releases/download/v${MACPORTS_VERSION}/${MACPORTS_PKG_NAME}"
+           wget "${MACPORTS_URL}" --output-document "${MACPORTS_PKG_NAME}" 
+           sudo installer -pkg "./${MACPORTS_PKG_NAME}" -target /
+           sudo /opt/local/bin/port install check
+      - name: make check
+        run: make check
