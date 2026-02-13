@@ -286,75 +286,38 @@ const char* get_format_description(OutputFormat format) {
 // Always produces exactly 4 characters, right-aligned, SI units
 // Examples: "   0", " 999", "1.0K", " 99K", "999K", "1.0M", " 99M", "999M", "1.0G", etc.
 void format_compact(uint64_t value, char buf[5]) {
-    buf[4] = '\0';  // Always null-terminate at position 4
+    buf[4] = '\0';
     
     if (value < 1000) {
-        // 0-999: right-aligned integer
-        if (value < 10) {
-            snprintf(buf, 5, "   %llu", (unsigned long long)value);
-        } else if (value < 100) {
-            snprintf(buf, 5, "  %2llu", (unsigned long long)value);
-        } else {
-            snprintf(buf, 5, " %3llu", (unsigned long long)value);
-        }
-    } else if (value < 10000) {
-        // 1000-9999: X.XK (e.g., 1.0K, 9.9K)
+        snprintf(buf, 5, "%4llu", (unsigned long long)value);
+    } else if (value < 9950) {
         snprintf(buf, 5, "%.1fK", (double)value / 1000.0);
-    } else if (value < 100000) {
-        // 10000-99999: XXK (e.g., 10K, 99K) space-padded
-        snprintf(buf, 5, "%2lluK", (unsigned long long)(value / 1000));
-    } else if (value < 1000000) {
-        // 100000-999999: XXXK (e.g., 100K, 999K)
-        snprintf(buf, 5, "%3lluK", (unsigned long long)(value / 1000));
-    } else if (value < 10000000) {
-        // 1M-9.9M: X.XM
+    } else if (value < 999500) {
+        snprintf(buf, 5, "%3lluK", (unsigned long long)((value + 500) / 1000));
+    } else if (value < 9950000) {
         snprintf(buf, 5, "%.1fM", (double)value / 1000000.0);
-    } else if (value < 100000000) {
-        // 10M-99M: XXM (space-padded)
-        snprintf(buf, 5, "%2lluM", (unsigned long long)(value / 1000000));
-    } else if (value < 1000000000) {
-        // 100M-999M: XXXM
-        snprintf(buf, 5, "%3lluM", (unsigned long long)(value / 1000000));
-    } else if (value < 10000000000ULL) {
-        // 1G-9.9G: X.XG
+    } else if (value < 999500000) {
+        snprintf(buf, 5, "%3lluM", (unsigned long long)((value + 500000) / 1000000));
+    } else if (value < 9950000000ULL) {
         snprintf(buf, 5, "%.1fG", (double)value / 1000000000.0);
-    } else if (value < 100000000000ULL) {
-        // 10G-99G: XXG (space-padded)
-        snprintf(buf, 5, "%2lluG", (unsigned long long)(value / 1000000000));
-    } else if (value < 1000000000000ULL) {
-        // 100G-999G: XXXG
-        snprintf(buf, 5, "%3lluG", (unsigned long long)(value / 1000000000));
-    } else if (value < 10000000000000ULL) {
-        // 1T-9.9T: X.XT
+    } else if (value < 999500000000ULL) {
+        snprintf(buf, 5, "%3lluG", (unsigned long long)((value + 500000000) / 1000000000));
+    } else if (value < 9950000000000ULL) {
         snprintf(buf, 5, "%.1fT", (double)value / 1000000000000.0);
-    } else if (value < 100000000000000ULL) {
-        // 10T-99T: XXT (space-padded)
-        snprintf(buf, 5, "%2lluT", (unsigned long long)(value / 1000000000000ULL));
-    } else if (value < 1000000000000000ULL) {
-        // 100T-999T: XXXT
-        snprintf(buf, 5, "%3lluT", (unsigned long long)(value / 1000000000000ULL));
+    } else if (value < 999500000000000ULL) {
+        snprintf(buf, 5, "%3lluT", (unsigned long long)((value + 500000000000ULL) / 1000000000000ULL));
+    } else if (value < 9950000000000000ULL) {
+        snprintf(buf, 5, "%.1fP", (double)value / 1000000000000000ULL);
     } else {
-        // 1P+: XXXP (1P = 999P max shown, else wrap)
-        if (value >= 1000000000000000ULL) {
-            snprintf(buf, 5, "%3lluP", (unsigned long long)(value / 1000000000000000ULL));
-        } else {
-            // Shouldn't reach here, but fallback
-            snprintf(buf, 5, "999P");
-        }
+        snprintf(buf, 5, "999P");
     }
     
-    // Ensure exactly 4 chars (some snprintf may use fewer for small decimals like 1.0K)
     size_t len = strlen(buf);
     if (len < 4) {
-        // Right-align with leading spaces
         size_t pad = 4 - len;
         memmove(buf + pad, buf, len + 1);
-        for (size_t i = 0; i < pad; i++) {
-            buf[i] = ' ';
-        }
+        for (size_t i = 0; i < pad; i++) buf[i] = ' ';
     } else if (len > 4) {
-        // Shouldn't happen, but truncate
-        buf[3] = (value >= 1000) ? buf[3] : '0';
         buf[4] = '\0';
     }
 }

@@ -171,74 +171,47 @@ static int get_terminal_width(void) {
 
 // Fixed-width compact format for a file count (e.g., "2.1K", " 99K", "999K")
 static void format_count(size_t count, char buf[5]) {
-    // Use the same logic as format_compact but for small numbers
-    // Files count will be 0-999999 range, maybe more
+    buf[4] = '\0';
+    
     if (count < 1000) {
-        // 0-999: right-aligned integer
-        if (count < 10) {
-            snprintf(buf, 5, "   %zu", count);
-        } else if (count < 100) {
-            snprintf(buf, 5, "  %2zu", count);
-        } else {
-            snprintf(buf, 5, " %3zu", count);
-        }
-    } else if (count < 10000) {
-        // 1000-9999: X.XK
+        snprintf(buf, 5, "%4zu", count);
+    } else if (count < 9950) {
         snprintf(buf, 5, "%.1fK", (double)count / 1000.0);
-    } else if (count < 100000) {
-        // 10000-99999: XXK
-        snprintf(buf, 5, "%2lluK", (unsigned long long)(count / 1000));
-    } else if (count < 1000000) {
-        // 100000-999999: XXXK
-        snprintf(buf, 5, "%3lluK", (unsigned long long)(count / 1000));
+    } else if (count < 999500) {
+        snprintf(buf, 5, "%3lluK", (unsigned long long)((count + 500) / 1000));
+    } else if (count < 9950000) {
+        snprintf(buf, 5, "%.1fM", (double)count / 1000000.0);
+    } else if (count < 999500000) {
+        snprintf(buf, 5, "%3lluM", (unsigned long long)((count + 500000) / 1000000));
     } else {
-        // 1M+: use K format (since we need exactly 4 chars)
-        // Show up to 9999K (9.9M)
-        if (count >= 10000000ULL) {
-            // 10M+: show as X.XG
-            snprintf(buf, 5, "%.1fG", (double)count / 1000000.0);
-        } else {
-            // 1M-9.9M: X.XM
-            snprintf(buf, 5, "%.1fM", (double)count / 1000000.0);
-        }
+        snprintf(buf, 5, "%.1fG", (double)count / 1000000000.0);
     }
     
-    // Ensure exactly 4 chars
     size_t len = strlen(buf);
     if (len < 4) {
         size_t pad = 4 - len;
         memmove(buf + pad, buf, len + 1);
-        for (size_t i = 0; i < pad; i++) {
-            buf[i] = ' ';
-        }
+        for (size_t i = 0; i < pad; i++) buf[i] = ' ';
     } else if (len > 4) {
-        buf[3] = '0';
         buf[4] = '\0';
     }
 }
 
 static void display_status(DedupContext* ctx, const char* path) {
-    // Check if we should display status
-    // Note: We check STDOUT for TTY (not STDERR) to match original behavior
-    // even though we write to STDERR. This is because in non-TTY environments
-    // (piping, scripts), STDOUT is not a TTY and we want to suppress status line.
     if (!isatty(STDOUT_FILENO)) {
         return;
     }
     
-    // Print header once at the start
     static bool header_printed = false;
     if (!header_printed) {
-        fprintf(stderr, "%s %s %s %-5s %s %s\n",
-                "TOTAL", "QUED", "SHRD", "DELTA", "PROGRESS", "PATH");
+        fprintf(stderr, "%-4s %-4s %-4s %-5s %-20s %s\n",
+                "TOTL", "QUED", "SHRD", "DELTA", "PROGRESS", "PATH");
         header_printed = true;
     }
 
-    // Get terminal width
     int width = get_terminal_width();
-    if (width < 80) width = 80;  // Minimum width for display
+    if (width < 80) width = 80;
     
-    // Snapshot metrics under lock
     pthread_mutex_lock(&ctx->metrics_mutex);
     size_t total_bytes = ctx->total_bytes;
     size_t queued = ctx->queued_count;
@@ -246,7 +219,6 @@ static void display_status(DedupContext* ctx, const char* path) {
     size_t delta = ctx->saved;
     pthread_mutex_unlock(&ctx->metrics_mutex);
     
-    // Snapshot progress under lock (if progress is enabled)
     size_t completed = 0;
     size_t total = 0;
     if (ctx->progress) {
@@ -256,7 +228,6 @@ static void display_status(DedupContext* ctx, const char* path) {
         });
     }
     
-    // Format fields
     char total_bytes_str[5];
     char queued_str[5];
     char shared_str[5];
@@ -271,8 +242,6 @@ static void display_status(DedupContext* ctx, const char* path) {
     format_count(completed, done_str);
     format_count(total, total_str);
     
-    // Build progress bar
-    // 10 chars: [========-]
     char bar[12];
     bar[0] = '[';
     bar[10] = ']';
@@ -282,7 +251,7 @@ static void display_status(DedupContext* ctx, const char* path) {
         for (int i = 1; i < 10; i++) bar[i] = '-';
     } else {
         double fraction = (double)completed / (double)total;
-        int fill = (int)(fraction * 8.0);  // 8 characters for the bar content
+        int fill = (int)(fraction * 8.0);
         if (fill < 0) fill = 0;
         if (fill > 8) fill = 8;
         
@@ -290,54 +259,50 @@ static void display_status(DedupContext* ctx, const char* path) {
         for (int i = fill + 1; i < 10; i++) bar[i] = '-';
     }
     
-    // Build progress section: done[bar]totl
     char progress_str[21];
     snprintf(progress_str, sizeof(progress_str), "%s%s%s", done_str, bar, total_str);
     
-    // Truncate path to fit remaining space
-    // Fixed columns: 4+1+4+1+4+1+5+1+20 = 41 chars (including single spaces)
-    // But wait, we also need space for the plus sign in delta
-    // Actually: total(4) + space(1) + queued(4) + space(1) + shared(4) + space(1) + delta(5) + space(1) + progress(20) + space(2?) = ?
-    // Let's recalc: "12.4G 1.2K 340M +4.2M 2.1K[===-------]4.7K"
-    // That's 4 + 1 + 4 + 1 + 4 + 1 + 5 + 1 + 20 = 37 chars, plus maybe extra spaces
-    // Actually delta is +4.2M which is 5 chars, but + sign is included
-    // Let's be safe: assume 50 chars for the fixed columns
-    int fixed_width = 50;
-    int path_max = width - fixed_width - 1;  // -1 for trailing space
+    int fixed_width = 41;
+    int path_max = width - fixed_width - 1;
     if (path_max < 10) path_max = 10;
     
     char truncated_path[256];
+    memset(truncated_path, 0, sizeof(truncated_path));
     if (path) {
-        // Simple truncation: take end of path if too long
         size_t len = strlen(path);
         if (len <= (size_t)path_max) {
             strcpy(truncated_path, path);
         } else {
-            // Show last path_max chars with ~ at start
             size_t keep = path_max - 1;
             truncated_path[0] = '~';
             strncpy(truncated_path + 1, path + len - keep, keep);
             truncated_path[keep + 1] = '\0';
         }
-    } else {
-        strcpy(truncated_path, "");
     }
     
-    // Format: total queued shared delta +progress path
-    // For delta, we need a + sign if positive
-    char delta_prefix[8];
+    char delta_display[6];
     if (delta > 0) {
-        snprintf(delta_prefix, sizeof(delta_prefix), "+%s", delta_str);
+        snprintf(delta_display, sizeof(delta_display), "+%-4s", delta_str);
     } else {
-        snprintf(delta_prefix, sizeof(delta_prefix), " %s", delta_str);
+        snprintf(delta_display, sizeof(delta_display), " %-4s", delta_str);
+    }
+    delta_display[5] = '\0';
+    
+    int line_len = 4 + 1 + 4 + 1 + 4 + 1 + 5 + 1 + 20 + 1 + (int)strlen(truncated_path);
+    int padding = width - line_len;
+    if (padding < 0) padding = 0;
+    
+    char padding_str[256];
+    if (padding > 0 && padding < (int)sizeof(padding_str) - 1) {
+        memset(padding_str, ' ', padding);
+        padding_str[padding] = '\0';
+    } else {
+        padding_str[0] = '\0';
     }
     
-    // Print the line
-    // Format: total(4) queued(4) shared(4) delta(5) progress(20) path
-    // We'll include color codes for better visibility
-    fprintf(stderr, "\r\033[1m%s %s %s %s %s %s\033[0m\033[K",
-            total_bytes_str, queued_str, shared_str, delta_prefix,
-            progress_str, truncated_path);
+    fprintf(stderr, "\r%-4s %-4s %-4s %s %s %s%s\033[0m\033[K",
+            total_bytes_str, queued_str, shared_str, delta_display,
+            progress_str, truncated_path, padding_str);
     fflush(stderr);
 }
 
@@ -514,7 +479,6 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
 
 // Returns true if the entry was pruned (caller should free it), false if it survived.
 static bool prune_entry(FileEntry* fe, SeenSet* seen_inodes, SeenSet* seen_clones, DedupContext* c) {
-    // Hardlink elimination: if nlink > 1 and we've seen this inode, skip
     if (fe->nlink > 1) {
         uint64_t key = (uint64_t)fe->device << 32 | (uint64_t)(fe->inode & 0xFFFFFFFF);
         if (seen_set_insert(seen_inodes, key)) {
@@ -524,19 +488,12 @@ static bool prune_entry(FileEntry* fe, SeenSet* seen_inodes, SeenSet* seen_clone
             pthread_mutex_unlock(&c->metrics_mutex);
             PROGRESS_LOCK(c->progress, &c->progress_mutex, {
                 c->progress->completedUnitCount++;
-                display_progress(c->progress);
             });
-            if (c->verbosity > 1) {
-                PROGRESS_LOCK(c->progress, &c->progress_mutex, {
-                    clear_progress();
-                    fprintf(stderr, "pruned hardlink: %s\n", fe->path);
-                });
-            }
+            display_status(c, fe->path);
             return true;
         }
     }
 
-    // Clone group elimination: if clone_id != 0 and already seen, skip
     uint64_t clone_id = get_clone_id(fe->path);
     if (clone_id != 0) {
         if (seen_set_insert(seen_clones, clone_id)) {
@@ -546,14 +503,8 @@ static bool prune_entry(FileEntry* fe, SeenSet* seen_inodes, SeenSet* seen_clone
             pthread_mutex_unlock(&c->metrics_mutex);
             PROGRESS_LOCK(c->progress, &c->progress_mutex, {
                 c->progress->completedUnitCount++;
-                display_progress(c->progress);
             });
-            if (c->verbosity > 1) {
-                PROGRESS_LOCK(c->progress, &c->progress_mutex, {
-                    clear_progress();
-                    fprintf(stderr, "pruned clone: %s\n", fe->path);
-                });
-            }
+            display_status(c, fe->path);
             return true;
         }
     }
@@ -944,11 +895,13 @@ int main(int argc, char* argv[]) {
         .progress = &p,
         .queue = queue,
         .raw_queue = raw_queue,
-        .signatures = new_sig_table(65536),  // 64K buckets - reasonable size for most workloads
+        .signatures = new_sig_table(65536),
         .found = 0,
         .saved = 0,
         .already_saved = 0,
         .pruned = 0,
+        .total_bytes = 0,
+        .queued_count = 0,
         .scan_done = 0,
         .prune_done = 0,
         .dry_run = false,
@@ -1147,8 +1100,8 @@ int main(int argc, char* argv[]) {
                       entry->fts_path,
                       entry->fts_errno,
                       e);
-                display_progress(dc.progress);
             });
+            display_status(&dc, entry->fts_path);
             continue;
         }
 
@@ -1230,8 +1183,8 @@ int main(int argc, char* argv[]) {
         pthread_mutex_unlock(&dc.metrics_mutex);
         PROGRESS_LOCK(dc.progress, &dc.progress_mutex, {
             dc.progress->totalUnitCount++;
-            display_progress(dc.progress);
         });
+        display_status(&dc, entry->fts_path);
 
         // Track queued count (increment for raw_queue entry)
         pthread_mutex_lock(&dc.metrics_mutex);
@@ -1348,7 +1301,7 @@ int main(int argc, char* argv[]) {
 
     // Clear status line
     if (isatty(STDOUT_FILENO)) {
-        fprintf(stderr, "\r\033[K");
+        fprintf(stderr, "\r\033[K\n");
     }
     
     // Close summary file if it was opened

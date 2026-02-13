@@ -49,8 +49,6 @@ uint64_t get_clone_id(const char* restrict path) {
 
     int err = getattrlist(path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
     if (err) {
-        warnx("%s:%i %s", __FUNCTION__, __LINE__, path);
-        perror("could not getattrlist");
         return 0;
     }
 
@@ -71,8 +69,6 @@ int may_share_blocks(const char* restrict path) {
 
     int err = getattrlist(path, &attrList, &clone_id, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
     if (err) {
-        warnx("%s:%i %s", __FUNCTION__, __LINE__, path);
-        perror("could not getattrlist");
         return 0;
     }
 
@@ -93,8 +89,6 @@ size_t private_size(const char* restrict path) {
 
     int err = getattrlist(path, &attrList, &size_attr, sizeof(struct UInt64Ref), FSOPT_ATTR_CMN_EXTENDED);
     if (err) {
-        warnx("%s:%i %s", __FUNCTION__, __LINE__, path);
-        perror("could not getattrlist");
         return 0;
     }
 
