@@ -40,6 +40,7 @@ OBJECTS = \
     map.o \
     progress.o \
     queue.o \
+    seen_set.o \
     utils.o \
     signature.o \
     sig_table.o \

@@ -38,7 +38,7 @@
 
 START_TEST(dedup_link_empty) {
     char* output = run("../dedup -l test-data/link/empty");
-    ck_assert_str_eq("duplicates found: 0\nbytes saved: 0\nalready saved: 0\n", output);
+    ck_assert_str_eq("duplicates found: 0\nentries pruned: 0\nbytes saved: 0 bytes\nalready saved: 0 bytes\n", output);
     free(output);
 
     struct stat e1 = { 0 }, e2 = { 0 };

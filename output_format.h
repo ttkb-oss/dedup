@@ -59,4 +59,9 @@ const char* get_format_description(OutputFormat format);
 // List all available formats
 void list_available_formats(FILE* out);
 
+// Fixed-width compact format for status line columns
+// Always produces exactly 4 characters, right-aligned, SI units (K, M, G, T, P)
+// Examples: "   0", " 999", "1.0K", " 99K", "999K", "1.0M", " 99M", "999M", "1.0G", etc.
+void format_compact(uint64_t value, char buf[5]);
+
 #endif // __DEDUP_OUTPUT_FORMAT_H__
