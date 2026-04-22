@@ -44,6 +44,8 @@ OBJECTS = \
     utils.o \
     signature.o \
     sig_table.o \
+    runtime_caps.o \
+    runtime_dispatch.o \
     output_format.o \
 
 .PHONY: \

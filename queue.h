@@ -42,6 +42,7 @@ typedef struct FileEntry {
     nlink_t nlink;
     uint32_t flags;
     size_t size;
+    uint64_t sequence;
     bool acls_supported;
     short level;
     STAILQ_ENTRY(FileEntry) entries;    /* Tail queue. */
@@ -57,6 +58,7 @@ void file_entry_queue_append(FileEntryHead* queue,
                              nlink_t nlink,
                              uint32_t flags,
                              size_t size,
+                             uint64_t sequence,
                              short level);
 FileEntry* file_entry_next(FileEntryHead* queue);
 void file_entry_free(FileEntry* fe);

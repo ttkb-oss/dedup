@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "runtime_dispatch.h"
+
 SigTable* new_sig_table(size_t bucket_count) {
     SigTable* table = calloc(1, sizeof(SigTable));
     if (!table) {
@@ -52,17 +54,20 @@ SigTableEntry* sig_table_insert(SigTable* table, FileSignature* sig, const char*
     uint64_t hash = hash_signature(sig);
     size_t bucket_idx = hash % table->bucket_count;
 
-    // Check for existing match in collision chain
+    // Check for existing match in collision chain.
+    // SMHasher-style discipline: a fast hash/signature only nominates candidates;
+    // witness stages may reject quickly, but exact comparison is still required
+    // before treating files as equal.
     SigTableEntry* entry = table->buckets[bucket_idx];
     while (entry) {
-        if (signatures_match(entry->signature, sig)) {
-            // Found a match - return existing entry
+        if (signatures_match(entry->signature, sig) &&
+            dedup_runtime_witness_compare(entry->path, path, sig->size) &&
+            dedup_runtime_exact_compare(entry->path, path, sig->size)) {
             return entry;
         }
         entry = entry->next;
     }
 
-    // No match found - create new entry
     SigTableEntry* new_entry = calloc(1, sizeof(SigTableEntry));
     if (!new_entry) {
         return NULL;
@@ -76,7 +81,7 @@ SigTableEntry* sig_table_insert(SigTable* table, FileSignature* sig, const char*
     table->buckets[bucket_idx] = new_entry;
     table->entry_count++;
 
-    return NULL;  // No match found
+    return NULL;
 }
 
 bool sig_table_has_clone_id(const SigTable* table, uint64_t clone_id) {

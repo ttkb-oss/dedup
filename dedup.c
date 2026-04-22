@@ -66,6 +66,7 @@ static char sccsid[] = "@(#)dedup.c)";
 #include "progress.h"
 #include "queue.h"
 #include "output_format.h"
+#include "runtime_dispatch.h"
 #include "seen_set.h"
 #include "signature.h"
 #include "sig_table.h"
@@ -142,6 +143,8 @@ typedef struct DedupContext {
     size_t pruned;
     size_t total_bytes;  // Accumulated bytes of all scanned files
     size_t queued_count; // Entries in raw_queue + work_queue combined
+    uint64_t next_file_sequence;
+    uint64_t next_visit_sequence;
     uint8_t scan_done;
     uint8_t prune_done;
     uint8_t thread_count;
@@ -159,6 +162,8 @@ typedef struct DedupContext {
     pthread_mutex_t signatures_mutex;
     pthread_mutex_t scan_done_mutex;
     pthread_mutex_t prune_done_mutex;
+    pthread_mutex_t visit_order_mutex;
+    pthread_cond_t visit_order_cond;
 } DedupContext;
 
 static int get_terminal_width(void) {
@@ -306,14 +311,39 @@ static void display_status(DedupContext* ctx, const char* path) {
     fflush(stderr);
 }
 
+static void visit_order_begin(DedupContext* ctx, uint64_t sequence) {
+    if (!ctx || ctx->thread_count == 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&ctx->visit_order_mutex);
+    while (sequence != ctx->next_visit_sequence) {
+        pthread_cond_wait(&ctx->visit_order_cond, &ctx->visit_order_mutex);
+    }
+    pthread_mutex_unlock(&ctx->visit_order_mutex);
+}
+
+static void visit_order_end(DedupContext* ctx) {
+    if (!ctx || ctx->thread_count == 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&ctx->visit_order_mutex);
+    ctx->next_visit_sequence++;
+    pthread_cond_broadcast(&ctx->visit_order_cond);
+    pthread_mutex_unlock(&ctx->visit_order_mutex);
+}
+
 void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
     if (!fe || !ctx) {
         return;
     }
 
     FileSignature* sig = compute_signature(fe->path, fe->device, fe->size);
+    visit_order_begin(ctx, fe->sequence);
     if (!sig) {
         // Silently skip files we can't read (locked, slow FUSE mounts, etc)
+        visit_order_end(ctx);
         return;
     }
 
@@ -324,6 +354,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             fprintf(stderr, "signature table not initialized for %s\n", fe->path);
         });
         free_signature(sig);
+        visit_order_end(ctx);
         return;
     }
 
@@ -356,6 +387,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             ctx->already_saved += fe->size;
             pthread_mutex_unlock(&ctx->metrics_mutex);
             free_signature(sig);
+            visit_order_end(ctx);
             return;
         }
 
@@ -371,6 +403,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             ctx->already_saved += fe->size;
             pthread_mutex_unlock(&ctx->metrics_mutex);
             free_signature(sig);
+            visit_order_end(ctx);
             return;
         }
 
@@ -381,6 +414,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             ctx->already_saved += fe->size;
             pthread_mutex_unlock(&ctx->metrics_mutex);
             free_signature(sig);
+            visit_order_end(ctx);
             return;
         }
 
@@ -404,6 +438,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
                 ctx->already_saved += fe->size;
                 pthread_mutex_unlock(&ctx->metrics_mutex);
                 free_signature(sig);
+                visit_order_end(ctx);
                 return;
             }
             
@@ -423,6 +458,7 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             if (result) {
                 // Silently skip clone failures (permissions, filesystem issues, etc)
                 free_signature(sig);
+                visit_order_end(ctx);
                 return;
             } else {
                 if (ctx->verbosity) {
@@ -475,6 +511,8 @@ void visit_entry(FileEntry* fe, Progress* p, DedupContext* ctx) {
             free_signature(sig);
         }
     }
+
+    visit_order_end(ctx);
 }
 
 // Returns true if the entry was pruned (caller should free it), false if it survived.
@@ -558,6 +596,7 @@ void* prune_work(void* ctx) {
                                 fe->nlink,
                                 fe->flags,
                                 fe->size,
+                                fe->sequence,
                                 fe->level);
         pthread_mutex_unlock(&c->queue_mutex);
         
@@ -902,6 +941,8 @@ int main(int argc, char* argv[]) {
         .pruned = 0,
         .total_bytes = 0,
         .queued_count = 0,
+        .next_file_sequence = 0,
+        .next_visit_sequence = 0,
         .scan_done = 0,
         .prune_done = 0,
         .dry_run = false,
@@ -919,6 +960,8 @@ int main(int argc, char* argv[]) {
         .signatures_mutex = PTHREAD_MUTEX_INITIALIZER,
         .scan_done_mutex = PTHREAD_MUTEX_INITIALIZER,
         .prune_done_mutex = PTHREAD_MUTEX_INITIALIZER,
+        .visit_order_mutex = PTHREAD_MUTEX_INITIALIZER,
+        .visit_order_cond = PTHREAD_COND_INITIALIZER,
     };
 
     // Validate signature table was created successfully
@@ -1191,6 +1234,8 @@ int main(int argc, char* argv[]) {
         dc.queued_count++;
         pthread_mutex_unlock(&dc.metrics_mutex);
 
+        uint64_t sequence = dc.next_file_sequence++;
+
         if (dc.thread_count == 0) {
             // Single-threaded: prune and process inline
             file_entry_queue_append(raw_queue,
@@ -1200,6 +1245,7 @@ int main(int argc, char* argv[]) {
                                     entry->fts_statp->st_nlink,
                                     entry->fts_statp->st_flags,
                                     entry->fts_statp->st_size,
+                                    sequence,
                                     entry->fts_level);
             FileEntry* fe = file_entry_next(raw_queue);
             // Decrement queued_count since we're processing it immediately
@@ -1218,6 +1264,7 @@ int main(int argc, char* argv[]) {
                                         fe->nlink,
                                         fe->flags,
                                         fe->size,
+                                        fe->sequence,
                                         fe->level);
                 file_entry_free(fe);
                 dedup_work(&dc);
@@ -1231,6 +1278,7 @@ int main(int argc, char* argv[]) {
                                     entry->fts_statp->st_nlink,
                                     entry->fts_statp->st_flags,
                                     entry->fts_statp->st_size,
+                                    sequence,
                                     entry->fts_level);
             pthread_mutex_unlock(&dc.raw_queue_mutex);
         }
