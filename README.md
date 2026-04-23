@@ -8,16 +8,6 @@ A macOS utility to replace duplicate file data with a copy-on-write clone.
 
 **dedup** `[-PVnvx]` [`-t`&nbsp;**threads**] [`-d`&nbsp;**depth**] [*file&nbsp;...*]
 
-# WARNING: Block Corruption Risk
-
-APFS cloning deduplicates storage by making all instances of a file reference the same underlying block.
-**If that block becomes corrupted, all cloned instances are affected.**
-This is generally fine for software projects where files can be regenerated or checked out again, 
-but it poses a risk for unique or irreplaceable files.
-
-To mitigate this, ensure you maintain separate backups on different hardware. 
-Cloning **should not** be considered a substitute for a proper backup strategy.
-
 # DESCRIPTION
 
 **dedup** finds files with identical content using the provided *file* arguments.
@@ -197,6 +187,19 @@ may be changed and then overwritten by a clone with it's previous content.
 
 It may be reasonable for future versions to include additional checks and locks
 to ensure modifications are detected prior to clone replacement.
+
+## Block Corruption Risk
+
+APFS cloning deduplicates storage by making all instances of a file reference the
+same underlying blocks. **If even one of those blocks becomes corrupted, all
+cloned instances are affected.** This is not a problem with
+**dedup**
+or something that
+**dedup**
+can prevent, but is a fact of any filesystem. Reducing the number of copies in a
+single volume reduces one level of redundancy. This may pose a risk for unique or
+irreplaceable files. It is always a good idea to maintain backups on different
+logical volumes of any files, including ones that may be deduplicated.
 
 # HISTORY
 
