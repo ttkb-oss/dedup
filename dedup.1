@@ -143,6 +143,10 @@ Prevent
 .Nm
 from descending into directories that have a device number different than that
 of the file from which the descent began.
+.It Fl m , Fl Fl parent-mtime
+Preserve the parent directory modification time (mtime) when a file is cloned.
+Useful when working with backups or other programs that are sensitive to
+directory changes.
 .It Fl ? , Fl Fl help
 Print a summary of options and exit.
 .El

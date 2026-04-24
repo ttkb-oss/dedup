@@ -1,4 +1,4 @@
-// Copyright © 2023 TTKB, LLC.
+// Copyright © 2023-2026 TTKB, LLC.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -51,9 +51,28 @@
 ///   returned by `clonefile(2)`, `copyfile(2)`, or `rename(2)`.
 ///
 /// See also: `clonefile(2)`, `copyfile(2)`, or `rename(2)`
-int replace_with_clone(const char* src, const char* dst);
+int replace_with_clone(const char* src, const char* dst, bool preserve_parent_mtime);
 
+/// replace_with_link
+///
+/// The `replae_with_link` function causes the link named `dst` to be
+/// replaced with a hardlink of `src`. `src` and `dst` must be on the same
+/// volume.
+///
+/// On success `dst` will be replaced and `replace_with_link` returns 0.
+///
+/// On failure `link(2)` will return an error.
+///
+/// See also: `link(2)`
 int replace_with_link(const char* src, const char* dst);
+
+/// replace_with_symlink
+///
+/// The `replace_with_symlink` function causes the link named `dst` to be
+/// replaced with a symlink to `src`. The link will be a relative path from
+/// `dst` to `src`.
+///
+/// See also: `symlink(2)`
 int replace_with_symlink(const char* src, const char* dst);
 
 #endif // __DEDUP_CLONE_H__

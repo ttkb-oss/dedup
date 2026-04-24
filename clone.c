@@ -1,4 +1,4 @@
-// Copyright © 2023 TTKB, LLC.
+// Copyright © 2023-2026 TTKB, LLC.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -36,6 +36,7 @@
 
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,7 +45,7 @@
 
 #include "clone.h"
 
-int find_zero_file(const char* restrict path) {
+static int find_zero_file(const char* restrict path) {
     if (access(path, W_OK)) {
         return 1;
     }
@@ -97,7 +98,7 @@ char* tmp_name(const char* restrict path, char* restrict out, size_t size) {
     return out;
 }
 
-int genfile_clone(const char* src, const char* dst) {
+static int genfile_clone(const char* src, const char* dst) {
 #if defined(__APPLE__)
     return clonefile(src, dst, 0);
 #elif defined(__FREEBSD__)
@@ -129,26 +130,97 @@ int genfile_clone(const char* src, const char* dst) {
 #endif
 }
 
-int replace_with_clone(const char* src, const char* dst) {
-    char path[PATH_MAX] = { 0 };
-    if (!tmp_name(dst, path, PATH_MAX)) {
+// get the parent directory mtime and return it and a file descriptor
+// for the directory. if return is 0, caller is responsible for closing
+// the returned fd
+static int dir_mtime(const char* path, int* fd_out, struct timespec* mtime_out) {
+    char buffer[PATH_MAX] = { 0 };
+    char* parent = dirname_r(path, buffer);
+    if (!parent) {
+        perror("dirname_r");
+        return -1;
+    }
+
+    int fd = open(parent, O_RDONLY);
+    if (fd == -1) {
+        perror("open parent dir");
+        return -1;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) == -1) {
+        perror("fstat parent dir");
+        close(fd);
+        return -1;
+    }
+
+    *fd_out = fd;
+    *mtime_out = st.st_mtimespec;
+    return 0;
+}
+
+// restore the provided mtime to the provided fd. fd is closed
+// before the function returns
+static void restore_dir_mtime(int fd, struct timespec mtime) {
+    struct timespec times[2] = {
+        // omit atime
+        { .tv_sec = 0, .tv_nsec = UTIME_OMIT },
+        mtime,
+    };
+    if (futimens(fd, times) == -1) {
+        switch (errno) {
+        case EPERM:
+            fprintf(stderr, "Warning: cannot preserve parent mtime, permission denied\n");
+            break;
+        case EROFS:
+            fprintf(stderr, "Warning: cannot preserve parent mtime, filesystem is read-only\n");
+            break;
+        default:
+            perror("Warning: futimens");
+            break;
+        }
+    }
+    close(fd);
+}
+
+#ifdef DEBUG
+#define COPYFILE_DEBUG (1<<31)
+#else
+#define COPYFILE_DEBUG (0)
+#endif
+
+int replace_with_clone(const char* src, const char* dst, bool preserve_parent_mtime) {
+    int parent_fd = -1;
+    struct timespec saved_mtime = { 0 };
+
+    if (preserve_parent_mtime &&
+        dir_mtime(dst, &parent_fd, &saved_mtime) == -1) {
         return errno;
     }
 
+    int result = 0;
+
+    char path[PATH_MAX] = { 0 };
+    if (!tmp_name(dst, path, PATH_MAX)) {
+        result = errno;
+        goto cleanup;
+    }
+
     errno = 0;
-    int result = genfile_clone(src, path);
+    result = genfile_clone(src, path);
 
     if (result) {
         perror("could not clonefile");
         unlink(path); // if it exists
-        return result;
+        goto cleanup;
     }
 
     if (find_zero_file(path)) {
         fprintf(stderr,
                 "invalid file created by clonefile(2)\n");
         unlink(path);
-        return ENOENT;
+        result = ENOENT;
+        goto cleanup;
     }
 
 #if defined(__APPLE__)
@@ -161,24 +233,26 @@ int replace_with_clone(const char* src, const char* dst) {
     if (check & COPYFILE_DATA) {
         perror("copyfile(3) should not copy data");
         unlink(path);
-        return check;
+        result = check;
+        goto cleanup;
     }
 
     result = copyfile(dst,
                       path,
                       NULL,
-                      COPYFILE_METADATA | (1<<31));
+                      COPYFILE_METADATA | COPYFILE_DEBUG);
     if (result) {
         perror("could not copy metadata");
         unlink(path);
-        return result;
+        goto cleanup;
     }
 
     if (find_zero_file(path)) {
         fprintf(stderr,
                 "invalid file created by copyfile(3)\n");
         unlink(path);
-        return ENOENT;
+        result = ENOENT;
+        goto cleanup;
     }
 #else
 #error Operating system not supported
@@ -191,10 +265,14 @@ int replace_with_clone(const char* src, const char* dst) {
     if (result) {
         perror("could not replace existing file");
         unlink(path);
-        return result;
+        goto cleanup;
     }
 
-    return 0;
+cleanup:
+    if (preserve_parent_mtime) {
+        restore_dir_mtime(parent_fd, saved_mtime);
+    }
+    return result;
 }
 
 
@@ -211,14 +289,25 @@ int replace_with_link(const char* src, const char* dst) {
 
 // returns a relative path to dst from src
 char* path_relative_to(const char* src, const char* dst) {
-    char* real_src = realpath(src, NULL),
-        * real_dst = realpath(dst, NULL),
-        * orig_real_src = real_src,
+    char* real_src = realpath(src, NULL);
+    if (real_src == NULL) {
+        fprintf(stderr, "%s could not be resolved to a canonical path.\n", src);
+        return NULL;
+    }
+
+    char* real_dst = realpath(dst, NULL);
+    if (real_dst == NULL) {
+        free(real_src);
+        fprintf(stderr, "%s could not be resolved to a canonical path.\n", dst);
+        return NULL;
+    }
+
+    char* orig_real_src = real_src,
         * orig_real_dst = real_dst;
 
-    // consume root /
-    real_src++;
-    real_dst++;
+    // consume root '/' if it exists
+    if (*real_src == '/') real_src++;
+    if (*real_dst == '/') real_dst++;
 
     int depth = 0;
 
@@ -275,6 +364,8 @@ char* path_relative_to(const char* src, const char* dst) {
 }
 
 int replace_with_symlink(const char* src, const char* dst) {
+    // must be called prior to unlink because realpath
+    // is used. unlinking first removes the real path
     char* path = path_relative_to(dst, src);
 
     // TODO: should this atomically move a tmp file instead of
