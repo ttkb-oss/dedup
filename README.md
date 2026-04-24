@@ -176,6 +176,8 @@ causes several race conditions if underlying files are being modified. If a file
 acting as a clone source or target is modified between any of the following
 events, a file may be replaced by something that resembles it's previous state.
 
+`dedup` operates by following this order of operations:
+
 1. File metadata retrieval and comparison to previously seen files
 2. Creation of a clone from a source
 3. Application of file metadata from the target

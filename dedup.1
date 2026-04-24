@@ -206,3 +206,53 @@ the same permissions, metadata, and ACLs. Support for copying metadata comes
 from
 .Xr copyfile 3
 .
+.Pp
+.Nm
+shouldn't be used on directories or files where files are actively being
+modified. In it's current implementation
+.Nm
+doesn't lock any files which causes several race conditions if underlying
+files are being modified. If a file acting as a clone source or target is
+modified between any of the following events, a file may be replaced by
+something that resembles it's previous state.
+.Pp
+.Nm
+operates by following this order of operations:
+.Bl -enum -offset indent
+.It
+File metadata retrieval and comparison to previously seen files
+.It
+Creation of a clone from a source
+.It
+Application of file metadata from the target
+.It
+Replacing the target with the clone
+.El
+.Pp
+For example, if file
+.Li a
+is seen and later file
+.Li b
+is found to be a match,
+.Li a
+may be changed, causing
+.Li b
+to be cloned to its new content. Likewise, file
+.Li b
+may be changed and then overwritten by a clone with it's previous content.
+.Pp
+It may be reasonable for future versions to include additional checks and locks
+to ensure modifications are detected prior to clone replacement.
+.Ss Block Corruption Risk
+APFS cloning deduplicates storage by making all instances of a file reference the
+same underlying blocks.
+.Em If even one of those blocks becomes corrupted, all cloned instances are
+.Em affected.
+This is not a problem with
+.Nm
+or something that
+.Nm
+can prevent, but is a fact of any filesystem. Reducing the number of copies in a
+single volume reduces one level of redundancy. This may pose a risk for unique or
+irreplaceable files. It is always a good idea to maintain backups on different
+logical volumes of any files, including ones that may be deduplicated.
