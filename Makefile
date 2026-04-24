@@ -16,6 +16,7 @@ CFLAGS += \
     -Wno-unused-parameter \
     -Wno-gnu-conditional-omitted-operand \
     -Wno-macro-redefined \
+    -Wimplicit-fallthrough \
     -Wp,-D_FORTIFY_SOURCE=3 \
     -fexceptions \
     -fpic \
@@ -113,7 +114,7 @@ clean: clean-coverage
 
 report-coverage:
 	mkdir -p build/private/coverage
-	geninfo . -o build/private/coverage.info
+	geninfo . -o build/private/coverage.info --ignore-errors path
 	genhtml build/private/coverage.info -o build/private/coverage
 
 PREFIX ?= /usr/local

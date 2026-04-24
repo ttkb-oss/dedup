@@ -33,37 +33,41 @@
 
 #include "../clone.h"
 
+#define PRESERVE_PARENT_MTIME true
+
 START_TEST(clone_path_to_long) {
     char dest[PATH_MAX + 10] = { 0 };
     memset(dest, 'x', PATH_MAX + 9);
 
-    int r = replace_with_clone("/tmp/does-not-exist", dest);
+    int r = replace_with_clone("/tmp/does-not-exist", dest, PRESERVE_PARENT_MTIME);
     ck_assert_int_eq(r, ENAMETOOLONG);
 
     dest[PATH_MAX + 4] = '/';
-    r = replace_with_clone("/tmp/does-not-exist", dest);
+    r = replace_with_clone("/tmp/does-not-exist", dest, PRESERVE_PARENT_MTIME);
     ck_assert_int_eq(r, ENAMETOOLONG);
     dest[PATH_MAX + 4] = 'x';
 
     dest[PATH_MAX / 2] = '/';
-    r = replace_with_clone("/tmp/does-not-exist", dest);
+    r = replace_with_clone("/tmp/does-not-exist", dest, PRESERVE_PARENT_MTIME);
     ck_assert_int_eq(r, ENAMETOOLONG);
 } END_TEST
 
 START_TEST(clone_bad_src) {
-    int r = replace_with_clone("/tmp/does-not-exist", "test-data/also-does-not-exist");
+    int r = replace_with_clone("/tmp/does-not-exist", "test-data/also-does-not-exist", PRESERVE_PARENT_MTIME);
     ck_assert_int_eq(r, -1);
 } END_TEST
 
 START_TEST(clone_bad_dst) {
     int r = replace_with_clone("test-data/clonefile/clone-dst-acls/bar",
-                               "test-data/clonefile/clone-dst-acls/bar3");
+                               "test-data/clonefile/clone-dst-acls/bar3",
+                               PRESERVE_PARENT_MTIME);
     ck_assert_int_eq(r, -1);
 } END_TEST
 
 START_TEST(clone_cannot_replace) {
     int r = replace_with_clone("test-data/clonefile/clone-dst-acls/bar",
-                               "test-data/clonefile/clone-dst-acls/bar4");
+                               "test-data/clonefile/clone-dst-acls/bar4",
+                               PRESERVE_PARENT_MTIME);
     ck_assert_int_eq(r, 2);
 } END_TEST
 

@@ -1,4 +1,4 @@
-// Copyright © 2023 TTKB, LLC.
+// Copyright © 2023-2026 TTKB, LLC.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -179,6 +179,90 @@ START_TEST(dedup_dry_run) {
     ck_assert_int_eq(0, WEXITSTATUS(r));
 } END_TEST
 
+#define ck_assert_timespec_eq(t1, t2) \
+    ck_assert_msg(((t1).tv_sec == (t2).tv_sec && (t1).tv_nsec == (t2).tv_nsec), \
+                  "Timespecs differ: %ld.%09ld != %ld.%09ld", \
+                  (long)(t1).tv_sec, (t1).tv_nsec, \
+                  (long)(t2).tv_sec, (t2).tv_nsec)
+
+#define ck_assert_timespec_ne(t1, t2) \
+    ck_assert_msg(((t1).tv_sec != (t2).tv_sec || (t1).tv_nsec != (t2).tv_nsec), \
+                  "Timespecs are identical: %ld.%09ld", \
+                  (long)(t1).tv_sec, (t1).tv_nsec)
+
+// ensure mtime is preserved and atime is not
+START_TEST(dedup_preserve_mtime) {
+    struct stat before = { 0 }, after = { 0 };
+    stat("test-data/clonefile/mtime", &before);
+
+    int r = system("../dedup -Pm test-data/clonefile/mtime");
+    ck_assert_int_eq(0, WEXITSTATUS(r));
+
+    stat("test-data/clonefile/mtime", &after);
+    ck_assert_timespec_eq(before.st_mtimespec, after.st_mtimespec);
+
+    // atime is explicitly omitted from restoration (UTIME_OMIT). it may
+    // or may not advance due to directory reads but we do not assert it
+    // must change since APFS may defer atime updates
+} END_TEST
+
+// ensure mtime is not preserved
+START_TEST(dedup_do_not_preserve_mtime) {
+    struct stat before = { 0 }, after = { 0 };
+    stat("test-data/clonefile/mtime-not-preserved", &before);
+
+    int r = system("../dedup -P test-data/clonefile/mtime-not-preserved");
+    ck_assert_int_eq(0, WEXITSTATUS(r));
+
+    stat("test-data/clonefile/mtime-not-preserved", &after);
+    ck_assert_timespec_ne(before.st_mtimespec, after.st_mtimespec);
+} END_TEST
+
+
+// dedup is running in the current directory and has to set mtime on '.'
+START_TEST(dedup_preserve_mtime_relative_cwd) {
+    // build an absolute path to the binary before chdir changes cwd
+    char dedup_path[PATH_MAX] = { 0 };
+    getcwd(dedup_path, sizeof(dedup_path));
+    strlcat(dedup_path, "/../dedup", sizeof(dedup_path));
+
+    char cwd[PATH_MAX] = { 0 };
+    getcwd(cwd, sizeof(cwd));
+    chdir("test-data/clonefile/mtime-cwd");
+
+    struct stat before = { 0 }, after = { 0 };
+    stat(".", &before);
+
+    char cmd[PATH_MAX + 8];
+    snprintf(cmd, sizeof(cmd), "%s -Pm .", dedup_path);
+    int r = system(cmd);
+
+    stat(".", &after);
+    chdir(cwd);
+
+    ck_assert_int_eq(0, WEXITSTATUS(r));
+    ck_assert_timespec_eq(before.st_mtimespec, after.st_mtimespec);
+} END_TEST
+
+/*
+// when `UF_IMMUTABLE` is set mtime cannot be set, but the clone should succed with warning
+START_TEST(dedup_parent_mtime_immutable) {
+    chflags("test-data/clonefile/mtime-immutable", UF_IMMUTABLE);
+
+    char* output = run("../dedup -P test-data/clonefile/mtime-immutable 2>&1");
+
+    // clear the flag before any assertions so cleanup always runs
+    chflags("test-data/clonefile/mtime-immutable", 0);
+
+    ck_assert_ptr_nonnull(strstr(output, "Warning: cannot preserve parent mtime"));
+    free(output);
+
+    ck_assert_uint_eq(get_clone_id("test-data/clonefile/mtime-immutable/bar"),
+                      get_clone_id("test-data/clonefile/mtime-immutable/bar2"));
+} END_TEST
+*/
+
+
 Suite* dedup_suite() {
     TCase* tc = tcase_create("dedup");
     tcase_add_test(tc, dedup_empty);
@@ -193,6 +277,10 @@ Suite* dedup_suite() {
     tcase_add_test(tc, dedup_negative_threads);
     tcase_add_test(tc, dedup_help);
     tcase_add_test(tc, dedup_dry_run);
+    tcase_add_test(tc, dedup_preserve_mtime);
+    tcase_add_test(tc, dedup_do_not_preserve_mtime);
+    tcase_add_test(tc, dedup_preserve_mtime_relative_cwd);
+    // tcase_add_test(tc, dedup_parent_mtime_immutable);
 
     Suite* s = suite_create("dedup");
     suite_add_tcase(s, tc);

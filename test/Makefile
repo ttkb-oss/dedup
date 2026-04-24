@@ -56,6 +56,9 @@ clean-test-data:
 	if [[ -f test-data/$(NAMESPACE)/clone-dst-acls/bar4 ]]; then \
 	    chflags nouchg test-data/$(NAMESPACE)/clone-dst-acls/bar4; \
 	fi
+	if [[ -d test-data/$(NAMESPACE)/mtime-immutable ]]; then \
+	    chflags nouchg test-data/$(NAMESPACE)/mtime-immutable; \
+	fi
 	rm -rf test-data/$(NAMESPACE)
 
 
@@ -90,7 +93,7 @@ clean-test-data:
 
 # setup: NAMESPACE ?= .
 setup: clean-test-data
-	mkdir -p test-data/$(NAMESPACE)/{bars,empty,devices,big,same-size,same-first-last,flags-acls,clone-dst-acls}
+	mkdir -p test-data/$(NAMESPACE)/{bars,empty,devices,big,same-size,same-first-last,flags-acls,clone-dst-acls,mtime,mtime-not-preserved,mtime-cwd,mtime-immutable}
 	# "bar" test data
 	pushd test-data/$(NAMESPACE)/bars; \
 	    echo "foo" > bar; \
@@ -139,6 +142,23 @@ setup: clean-test-data
 	    chmod +a "$$USER deny readattr,readextattr" bar3; \
 	    cp bar bar4; \
 	    chflags uchg bar4;
+	# "mtime" test data
+	pushd test-data/$(NAMESPACE)/mtime; \
+        echo "foo" > bar; \
+	    cp bar bar2;
+	# "mtime-not-preserved" test data
+	pushd test-data/$(NAMESPACE)/mtime-not-preserved; \
+        echo "foo" > bar; \
+        echo "foo" > bar2;
+	# "mtime-cwd" test data
+	pushd test-data/$(NAMESPACE)/mtime-cwd; \
+        echo "foo" > bar; \
+	    cp bar bar2;
+	# "mtime-immutable" test data
+	pushd test-data/$(NAMESPACE)/mtime-immutable; \
+        echo "foo" > bar; \
+	    cp bar bar2; \
+        chflags uchg .;
 	# HFS test
 	hdiutil create \
 	    -srcfolder test-data/$(NAMESPACE)/bars \

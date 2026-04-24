@@ -119,6 +119,12 @@ The following options are available:
 > from descending into directories that have a device number different than that
 > of the file from which the descent began.
 
+**-m**, **-&#45;parent-mtime**
+
+> Preserve the parent directory modification time (mtime) when a file is cloned.
+> Useful when working with backups or other programs that are sensitive to
+> directory changes.
+
 **-**?, **-&#45;help**
 
 > Print a summary of options and exit.
