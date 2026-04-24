@@ -37,6 +37,7 @@
 uint64_t get_clone_id(const char* restrict path);
 int may_share_blocks(const char* restrict path);
 size_t private_size(const char* restrict path);
+ino_t get_inode(const char* restrict path);
 
 FileMetadata* metadata_from_entry(FileEntry* fe) ATTR_MALLOC(free_metadata, 1);
 

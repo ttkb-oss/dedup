@@ -10,7 +10,7 @@
 //    this list of conditions and the following disclaimer in the documentation
 //    and/or other materials provided with the distribution.
 //
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS”
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 // AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 // IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
 // ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
@@ -24,43 +24,20 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause
 
-#ifndef __DEDUP_QUEUE_H__
-#define __DEDUP_QUEUE_H__
+#ifndef __DEDUP_SEEN_SET_H__
+#define __DEDUP_SEEN_SET_H__
 
-#include <sys/attr.h>
-#include <sys/queue.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
-STAILQ_HEAD(FileEntryHead, FileEntry);
+typedef struct SeenSet SeenSet;
 
-typedef struct FileEntryHead FileEntryHead;
+SeenSet* new_seen_set(size_t capacity);
+void free_seen_set(SeenSet* set);
 
-typedef struct FileEntry {
-    char* path;
-    dev_t device;
-    ino_t inode;
-    nlink_t nlink;
-    uint32_t flags;
-    size_t size;
-    uint64_t sequence;
-    bool acls_supported;
-    short level;
-    STAILQ_ENTRY(FileEntry) entries;    /* Tail queue. */
-} FileEntry;
+/// Insert a key into the set.
+/// Returns true if the key was already present (i.e., duplicate).
+bool seen_set_insert(SeenSet* set, uint64_t key);
 
-
-FileEntryHead* new_file_entry_queue();
-void free_file_entry_queue(FileEntryHead* queue);
-void file_entry_queue_append(FileEntryHead* queue,
-                             char* path,
-                             dev_t device,
-                             ino_t inode,
-                             nlink_t nlink,
-                             uint32_t flags,
-                             size_t size,
-                             uint64_t sequence,
-                             short level);
-FileEntry* file_entry_next(FileEntryHead* queue);
-void file_entry_free(FileEntry* fe);
-
-#endif // __DEDUP_QUEUE_H__
+#endif // __DEDUP_SEEN_SET_H__

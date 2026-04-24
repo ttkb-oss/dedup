@@ -38,7 +38,7 @@
 
 START_TEST(dedup_empty) {
     char* output = run("../dedup test-data/clonefile/empty");
-    ck_assert_str_eq("duplicates found: 0\nbytes saved: 0\nalready saved: 0\n", output);
+    ck_assert_str_eq("duplicates found: 0\nentries pruned: 0\nbytes saved: 0 bytes\nalready saved: 0 bytes\n", output);
     free(output);
 
     struct stat e1 = { 0 }, e2 = { 0 };
@@ -155,7 +155,7 @@ START_TEST(dedup_flags_acls) {
 
 START_TEST(dedup_hfs) {
     char* output = run("../dedup -Phx /Volumes/dedup-test-hfs-clonefile 2>&1");
-    ck_assert_str_eq("dedup: Skipping /Volumes/dedup-test-hfs-clonefile: cloning not supported\nduplicates found: 0\nbytes saved: 0 bytes\nalready saved: 0 bytes\n", output);
+    ck_assert_str_eq("dedup: Skipping /Volumes/dedup-test-hfs-clonefile: cloning not supported\nduplicates found: 0\nentries pruned: 0\nbytes saved: 0 bytes\nalready saved: 0 bytes\n", output);
     free(output);
 } END_TEST
 
@@ -179,6 +179,13 @@ START_TEST(dedup_dry_run) {
     ck_assert_int_eq(0, WEXITSTATUS(r));
 } END_TEST
 
+START_TEST(dedup_permission_denied) {
+    char* output = run("../dedup -nP test-data/clonefile/clone-dst-acls 2>&1");
+    ck_assert_ptr_nonnull(output);
+    ck_assert_ptr_null(strstr(output, "could not getattrlist"));
+    free(output);
+} END_TEST
+
 Suite* dedup_suite() {
     TCase* tc = tcase_create("dedup");
     tcase_add_test(tc, dedup_empty);
@@ -193,6 +200,7 @@ Suite* dedup_suite() {
     tcase_add_test(tc, dedup_negative_threads);
     tcase_add_test(tc, dedup_help);
     tcase_add_test(tc, dedup_dry_run);
+    tcase_add_test(tc, dedup_permission_denied);
 
     Suite* s = suite_create("dedup");
     suite_add_tcase(s, tc);

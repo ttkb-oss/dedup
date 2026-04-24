@@ -65,6 +65,37 @@ permissions, there should be little issue. The created files are also not
 copy-on-write and will share any modifications made. These options should only
 be used if the consequences of each choice are understood.
 
+## FAST MODE
+
+**dedup-fast** provides a high-performance alternative to the traditional
+two-phase deduplication approach. Instead of computing full SHA256 hashes for
+all files and then deduplicating in a second pass, **dedup-fast** uses a
+signature-based approach with immediate cloning.
+
+### Signature-Based Deduplication
+
+**dedup-fast** computes lightweight signatures for each file using:
+
+- **Strategic sampling**: Reads 4-byte samples at 0%, 33%, 66%, and 100% positions
+- **Quick hash**: xxHash64 of the first 4KB (or entire file if smaller)
+- **NEON acceleration**: Uses ARM NEON instructions for vectorized comparisons when available
+
+Files with matching signatures are considered duplicates and cloned immediately
+during the scan phase, eliminating the need for a separate deduplication pass.
+
+### Performance Benefits
+
+- **Single-pass operation**: No separate scan and dedup phases
+- **Reduced I/O**: Avoids full file reads for SHA256 computation
+- **Memory efficient**: Uses hash table instead of complex red-black trees
+- **Immediate cloning**: Duplicates are resolved as soon as they're found
+
+### Limitations
+
+- **Higher false positive rate**: Signature collisions may occur (rare)
+- **No SHA256 verification**: Relies on signature accuracy
+- **Memory usage**: Hash table grows with unique file count
+
 # OPTIONS
 
 The following options are available:

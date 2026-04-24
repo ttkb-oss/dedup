@@ -47,6 +47,7 @@ void file_entry_queue_append(FileEntryHead* queue,
                              nlink_t nlink,
                              uint32_t flags,
                              size_t size,
+                             uint64_t sequence,
                              short level) {
     FileEntry* e = malloc(sizeof(FileEntry));
     *e = (FileEntry) {
@@ -56,6 +57,7 @@ void file_entry_queue_append(FileEntryHead* queue,
         .nlink = nlink,
         .flags = flags,
         .size = size,
+        .sequence = sequence,
         .level = level,
     };
     STAILQ_INSERT_TAIL(queue, e, entries);
