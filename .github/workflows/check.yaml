@@ -10,19 +10,25 @@ jobs:
   check:
     strategy:
       matrix:
-        version: [15, 14, 13]
+        version: [26, 15, 14]
     runs-on: macOS-${{ matrix.version }}
     steps:
       - uses: actions/checkout@v4
       - name: install MacPorts
+        shell: bash
         run: |
-           MATRIX_VERSION="${{ matrix.version }}"
-           OS_NAME="$([[ ${{ matrix.version }} -eq 15 ]] && echo "Sequoia" || ( [[ ${{ matrix.version }} -eq 14 ]] && echo "Sonoma" || echo "Ventura" ) )"
-           MACPORTS_VERSION=2.10.5
-           MACPORTS_PKG_NAME="MacPorts-${MACPORTS_VERSION}-${MATRIX_VERSION}-${OS_NAME}.pkg"
-           MACPORTS_URL="https://github.com/macports/macports-base/releases/download/v${MACPORTS_VERSION}/${MACPORTS_PKG_NAME}"
-           wget "${MACPORTS_URL}" --output-document "${MACPORTS_PKG_NAME}" 
-           sudo installer -pkg "./${MACPORTS_PKG_NAME}" -target /
-           sudo /opt/local/bin/port install check
+          MATRIX_VERSION="${{ matrix.version }}"
+          case "${MATRIX_VERSION}" in
+            26) OS_NAME="Tahoe" ;;
+            15) OS_NAME="Sequoia" ;;
+            14) OS_NAME="Sonoma" ;;
+            *)  OS_NAME="Ventura" ;;
+          esac
+          MACPORTS_VERSION=2.12.5
+          MACPORTS_PKG_NAME="MacPorts-${MACPORTS_VERSION}-${MATRIX_VERSION}-${OS_NAME}.pkg"
+          MACPORTS_URL="https://github.com/macports/macports-base/releases/download/v${MACPORTS_VERSION}/${MACPORTS_PKG_NAME}"
+          wget "${MACPORTS_URL}" --output-document "${MACPORTS_PKG_NAME}"
+          sudo installer -pkg "./${MACPORTS_PKG_NAME}" -target /
+          sudo /opt/local/bin/port install check
       - name: make check
         run: make check
